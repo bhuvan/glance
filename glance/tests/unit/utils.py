@@ -16,10 +16,9 @@
 import logging
 import uuid
 
-import webob
-
 import glance.common.context
 from glance.common import exception
+from glance.common import wsgi
 
 LOG = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ USER1 = '54492ba0-f4df-4e4e-be62-27f4d76b29cf'
 USER2 = '0b3b3006-cb76-4517-ae32-51397e22c754'
 
 
-class FakeRequest(webob.Request):
+class FakeRequest(wsgi.Request):
     def __init__(self):
         #TODO(bcwaldon): figure out how to fake this out cleanly
         super(FakeRequest, self).__init__({'REQUEST_METHOD': 'POST'})
@@ -51,7 +50,7 @@ class FakeDB(object):
 
     def __init__(self):
         self.images = {
-            UUID1: self._image_format(UUID1),
+            UUID1: self._image_format(UUID1, location=UUID1),
             UUID2: self._image_format(UUID2),
         }
         self.members = {
@@ -61,12 +60,23 @@ class FakeDB(object):
             ],
             UUID2: [],
         }
+        self.tags = {
+            UUID1: {
+                'ping': {'image_id': UUID1, 'value': 'ping'},
+                'pong': {'image_id': UUID1, 'value': 'pong'},
+            },
+            UUID2: [],
+        }
 
     def reset(self):
         self.images = {}
         self.members = {}
+        self.tags = {}
 
     def configure_db(*args, **kwargs):
+        pass
+
+    def get_session(self):
         pass
 
     def _image_member_format(self, image_id, tenant_id, can_share):
@@ -74,14 +84,23 @@ class FakeDB(object):
             'image_id': image_id,
             'member': tenant_id,
             'can_share': can_share,
+            'deleted': False,
         }
 
     def _image_format(self, image_id, **values):
-        image = {'id': image_id, 'name': 'image-name'}
+        image = {
+            'id': image_id,
+            'name': 'image-name',
+            'owner': TENANT1,
+            'location': None,
+            'status': 'queued',
+            'is_public': False,
+            'properties': [],
+        }
         image.update(values)
         return image
 
-    def image_get(self, context, image_id):
+    def image_get(self, context, image_id, session=None):
         try:
             image = self.images[image_id]
             LOG.info('Found image %s: %s' % (image_id, str(image)))
@@ -137,3 +156,54 @@ class FakeDB(object):
         self.images[image_id] = image
         LOG.info('Image %s updated to %s' % (image_id, str(image)))
         return image
+
+    def image_tag_get_all(self, context, image_id):
+        return [
+            {'image_id': image_id, 'value': 'ping'},
+            {'image_id': image_id, 'value': 'pong'},
+        ]
+
+    def image_tag_get(self, context, image_id, value):
+        try:
+            return self.tags[image_id][value]
+        except KeyError:
+            raise exception.NotFound()
+
+    def image_tag_create(self, context, image_id, value):
+        tag = {'image_id': image_id, 'value': value}
+        self.tags[image_id][value] = tag.copy()
+        return tag
+
+    def image_tag_delete(self, context, image_id, value):
+        try:
+            del self.tags[image_id][value]
+        except KeyError:
+            raise exception.NotFound()
+
+
+class FakeStoreAPI(object):
+    def __init__(self):
+        self.data = {
+            UUID1: ('XXX', 3),
+        }
+
+    def create_stores(self, conf):
+        pass
+
+    def get_from_backend(self, location):
+        try:
+            #NOTE(bcwaldon): This fake API is store-agnostic, so we only
+            # care about location being some unique string
+            return self.data[location]
+        except KeyError:
+            raise exception.NotFound()
+
+    def get_size_from_backend(self, location):
+        return self.get_from_backend(location)[1]
+
+    def add_to_backend(self, scheme, image_id, data, size):
+        if image_id in self.data:
+            raise exception.Duplicate()
+        self.data[image_id] = (data, size or len(data))
+        checksum = 'Z'
+        return (image_id, size, checksum)

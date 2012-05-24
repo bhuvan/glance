@@ -15,20 +15,18 @@
 
 import json
 
-import jsonschema
 import webob.exc
 
 from glance.api.v2 import base
-from glance.api.v2 import schemas
 from glance.common import exception
 from glance.common import wsgi
 import glance.registry.db.api
 
 
 class ImagesController(base.Controller):
-    def __init__(self, conf, db=None):
+    def __init__(self, conf, db_api=None):
         super(ImagesController, self).__init__(conf)
-        self.db_api = db or glance.registry.db.api
+        self.db_api = db_api or glance.registry.db.api
         self.db_api.configure_db(conf)
 
     def create(self, req, image):
@@ -43,69 +41,85 @@ class ImagesController(base.Controller):
         return self.db_api.image_create(req.context, image)
 
     def index(self, req):
-        filters = {'deleted': False}
+        #NOTE(bcwaldon): is_public=True gets public images and those
+        # owned by the authenticated tenant
+        filters = {'deleted': False, 'is_public': True}
         return self.db_api.image_get_all(req.context, filters=filters)
 
     def show(self, req, image_id):
         try:
             return self.db_api.image_get(req.context, image_id)
-        except exception.NotFound:
+        except (exception.NotFound, exception.Forbidden):
             raise webob.exc.HTTPNotFound()
 
     def update(self, req, image_id, image):
         try:
             return self.db_api.image_update(req.context, image_id, image)
-        except exception.NotFound:
+        except (exception.NotFound, exception.Forbidden):
             raise webob.exc.HTTPNotFound()
 
     def delete(self, req, image_id):
         try:
             self.db_api.image_destroy(req.context, image_id)
-        except exception.NotFound:
+        except (exception.NotFound, exception.Forbidden):
             raise webob.exc.HTTPNotFound()
 
 
 class RequestDeserializer(wsgi.JSONRequestDeserializer):
-    def __init__(self, conf):
+    def __init__(self, conf, schema_api):
         super(RequestDeserializer, self).__init__()
         self.conf = conf
+        self.schema_api = schema_api
 
-    def _validate(self, request, obj):
-        schema = schemas.SchemasController(self.conf).image(request)
-        jsonschema.validate(obj, schema)
+    def _parse_image(self, request):
+        output = super(RequestDeserializer, self).default(request)
+        body = output.pop('body')
+        self.schema_api.validate('image', body)
+        output['image'] = body
+        if 'visibility' in body:
+            output['image']['is_public'] = body.pop('visibility') == 'public'
+        return output
 
     def create(self, request):
-        output = super(RequestDeserializer, self).default(request)
-        body = output.pop('body')
-        self._validate(request, body)
-        output['image'] = body
-        return output
+        return self._parse_image(request)
 
     def update(self, request):
-        output = super(RequestDeserializer, self).default(request)
-        body = output.pop('body')
-        self._validate(request, body)
-        output['image'] = body
-
-        return output
+        return self._parse_image(request)
 
 
 class ResponseSerializer(wsgi.JSONResponseSerializer):
-    def _get_image_href(self, image):
-        return '/v2/images/%s' % image['id']
+    def __init__(self, schema_api):
+        super(ResponseSerializer, self).__init__()
+        self.schema_api = schema_api
+
+    def _get_image_href(self, image, subcollection=''):
+        base_href = '/v2/images/%s' % image['id']
+        if subcollection:
+            base_href = '%s/%s' % (base_href, subcollection)
+        return base_href
 
     def _get_image_links(self, image):
         return [
             {'rel': 'self', 'href': self._get_image_href(image)},
+            {'rel': 'file', 'href': self._get_image_href(image, 'file')},
             {'rel': 'describedby', 'href': '/v2/schemas/image'},
         ]
 
+    def _filter_allowed_image_attributes(self, image):
+        schema = self.schema_api.get_schema('image')
+        attrs = schema['properties'].keys()
+        return dict((k, v) for (k, v) in image.iteritems() if k in attrs)
+
     def _format_image(self, image):
-        props = ['id', 'name']
-        items = filter(lambda item: item[0] in props, image.items())
-        obj = dict(items)
-        obj['links'] = self._get_image_links(image)
-        return obj
+        _image = dict(image['properties'])
+        _image = self._filter_allowed_image_attributes(_image)
+
+        for key in ['id', 'name']:
+            _image[key] = image[key]
+
+        _image['visibility'] = 'public' if image['is_public'] else 'private'
+        _image['links'] = self._get_image_links(image)
+        return _image
 
     def create(self, response, image):
         response.body = json.dumps({'image': self._format_image(image)})
@@ -128,9 +142,9 @@ class ResponseSerializer(wsgi.JSONResponseSerializer):
         response.status_int = 204
 
 
-def create_resource(conf):
+def create_resource(conf, schema_api):
     """Images resource factory method"""
-    deserializer = RequestDeserializer(conf)
-    serializer = ResponseSerializer()
+    deserializer = RequestDeserializer(conf, schema_api)
+    serializer = ResponseSerializer(schema_api)
     controller = ImagesController(conf)
     return wsgi.Resource(controller, deserializer, serializer)

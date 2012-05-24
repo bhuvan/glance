@@ -17,11 +17,14 @@
 
 """Functional test case that utilizes the bin/glance CLI tool"""
 
+import BaseHTTPServer
 import datetime
 import httplib2
 import json
 import os
 import tempfile
+import thread
+import time
 
 from glance.common import utils
 from glance.tests import functional
@@ -153,8 +156,8 @@ class TestBinGlance(functional.FunctionalTest):
 
         line = lines[0]
 
-        image_id, name, disk_format, container_format, size = \
-            [c.strip() for c in line.split()]
+        img_info = [c.strip() for c in line.split()]
+        image_id, name, disk_format, container_format, size = img_info
         self.assertEqual('MyImage', name)
 
         self.assertEqual('0', size, "Expected image to be 0 bytes in size, "
@@ -349,8 +352,8 @@ class TestBinGlance(functional.FunctionalTest):
 
         line = lines[0]
 
-        image_id, name, disk_format, container_format, size = \
-            [c.strip() for c in line.split()]
+        img_info = [c.strip() for c in line.split()]
+        image_id, name, disk_format, container_format, size = img_info
         self.assertEqual('MyImage', name)
 
         self.assertEqual('0', size, "Expected image to be 0 bytes in size, "
@@ -406,8 +409,8 @@ class TestBinGlance(functional.FunctionalTest):
 
         line = lines[0]
 
-        image_id, name, disk_format, container_format, size = \
-            [c.strip() for c in line.split()]
+        img_info = [c.strip() for c in line.split()]
+        image_id, name, disk_format, container_format, size = img_info
         self.assertEqual('MyImage', name)
 
         self.assertEqual('3', size,
@@ -503,8 +506,8 @@ class TestBinGlance(functional.FunctionalTest):
 
         # 5. Update the image's Name attribute
         updated_image_name = "Updated image name"
-        cmd = "bin/glance --port=%d update %s is_public=True name=\"%s\"" \
-                % (api_port, image_id, updated_image_name)
+        cmd = ("bin/glance --port=%d update %s is_public=True name=\"%s\"" %
+               (api_port, image_id, updated_image_name))
 
         exitcode, out, err = execute(cmd)
 
@@ -536,8 +539,12 @@ class TestBinGlance(functional.FunctionalTest):
         self.cleanup()
 
         # Start servers with a Swift backend and a bad auth URL
-        options = {'default_store': 'swift',
-                   'swift_store_auth_address': 'badurl'}
+        override_options = {
+            'default_store': 'swift',
+            'swift_store_auth_address': 'badurl',
+        }
+        options = self.__dict__.copy()
+        options.update(override_options)
         self.start_servers(**options)
 
         api_port = self.api_port
@@ -575,7 +582,6 @@ class TestBinGlance(functional.FunctionalTest):
 
         self.stop_servers()
 
-    @functional.runs_sql
     def test_add_location_with_checksum(self):
         """
         We test the following:
@@ -607,7 +613,6 @@ class TestBinGlance(functional.FunctionalTest):
 
         self.stop_servers()
 
-    @functional.runs_sql
     def test_add_location_without_checksum(self):
         """
         We test the following:
@@ -639,7 +644,6 @@ class TestBinGlance(functional.FunctionalTest):
 
         self.stop_servers()
 
-    @functional.runs_sql
     def test_add_clear(self):
         """
         We test the following:
@@ -1096,8 +1100,8 @@ class TestBinGlance(functional.FunctionalTest):
 
         line = lines[0]
 
-        image_id, name, disk_format, container_format, size = \
-            [c.strip() for c in line.split()]
+        img_info = [c.strip() for c in line.split()]
+        image_id, name, disk_format, container_format, size = img_info
         self.assertEqual('MyImage', name)
 
         # 3. Delete the image
@@ -1109,8 +1113,8 @@ class TestBinGlance(functional.FunctionalTest):
         self.assertTrue(out.startswith('You do not have permission'))
 
         # 4. Remove image protection
-        cmd = "bin/glance --port=%d --force update %s" \
-              " protected=False" % (api_port, image_id)
+        cmd = ("bin/glance --port=%d --force update %s "
+               "protected=False" % (api_port, image_id))
 
         exitcode, out, err = execute(cmd)
 
@@ -1134,3 +1138,35 @@ class TestBinGlance(functional.FunctionalTest):
         self.assertEqual('', out.strip())
 
         self.stop_servers()
+
+    def test_timeout(self):
+        self.cleanup()
+
+        keep_sleeping = True
+
+        #start a simple HTTP server in a thread that hangs for a bit
+        class RemoteImageHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+            def do_GET(self):
+                cnt = 1
+                while (keep_sleeping):
+                    cnt += 1
+                    time.sleep(0.1)
+                    if cnt > 100:
+                        break
+
+        server_class = BaseHTTPServer.HTTPServer
+        local_server = server_class(('127.0.0.1', 0), RemoteImageHandler)
+        local_ip, local_port = local_server.server_address
+
+        def serve_requests(httpd):
+            httpd.serve_forever()
+
+        thread.start_new_thread(serve_requests, (local_server,))
+
+        cmd = ("bin/glance --port=%d index --timeout=1") % local_port
+        exitcode, out, err = execute(cmd, raise_error=False)
+
+        keep_sleeping = False
+        local_server.shutdown()
+        self.assertNotEqual(0, exitcode)
+        self.assertTrue("timed out" in out)
