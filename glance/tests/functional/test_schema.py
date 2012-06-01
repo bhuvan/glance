@@ -13,23 +13,32 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import unittest
-
 import glance.schema
+from glance.tests import utils
 
 
-class TestSchemaAPI(unittest.TestCase):
+class TestSchemaAPI(utils.BaseTestCase):
+
+    def setUp(self):
+        super(TestSchemaAPI, self).setUp()
+        conf = utils.TestConfigOpts()
+        self.schema_api = glance.schema.API(conf)
 
     def test_load_image_schema(self):
-        schema_api = glance.schema.API()
-        output = schema_api.get_schema('image')
+        output = self.schema_api.get_schema('image')
         self.assertEqual('image', output['name'])
-        expected_keys = set(['id', 'name', 'visibility'])
+        expected_keys = set([
+            'id',
+            'name',
+            'visibility',
+            'created_at',
+            'updated_at',
+            'tags',
+        ])
         self.assertEqual(expected_keys, set(output['properties'].keys()))
 
     def test_load_access_schema(self):
-        schema_api = glance.schema.API()
-        output = schema_api.get_schema('access')
+        output = self.schema_api.get_schema('access')
         self.assertEqual('access', output['name'])
         expected_keys = ['tenant_id', 'can_share']
         self.assertEqual(expected_keys, output['properties'].keys())

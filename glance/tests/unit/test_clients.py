@@ -18,7 +18,6 @@
 import datetime
 import os
 import tempfile
-import unittest
 
 from glance import client
 from glance.common import client as base_client
@@ -39,7 +38,7 @@ UUID1 = _gen_uuid()
 UUID2 = _gen_uuid()
 
 
-class TestBadClients(unittest.TestCase):
+class TestBadClients(test_utils.BaseTestCase):
 
     """Test exceptions raised for bad clients"""
 
@@ -1139,7 +1138,12 @@ class TestRegistryClient(base.IsolatedUnitTest):
         orig_num_images = len(self.client.get_images())
 
         # Delete image #2
-        self.assertTrue(self.client.delete_image(UUID2))
+        image = self.FIXTURES[1]
+        deleted_image = self.client.delete_image(image['id'])
+        self.assertTrue(deleted_image)
+        self.assertEquals(image['id'], deleted_image['id'])
+        self.assertTrue(deleted_image['deleted'])
+        self.assertTrue(deleted_image['deleted_at'])
 
         # Verify one less image
         new_num_images = len(self.client.get_images())
@@ -2061,8 +2065,10 @@ class TestClient(base.IsolatedUnitTest):
                           self.client.delete_member, UUID2, 'pattieblack')
 
 
-class TestConfigureClientFromURL(unittest.TestCase):
+class TestConfigureClientFromURL(test_utils.BaseTestCase):
+
     def setUp(self):
+        super(TestConfigureClientFromURL, self).setUp()
         self.client = client.Client("0.0.0.0")
 
     def assertConfiguration(self, url, host, port, use_ssl, doc_root):

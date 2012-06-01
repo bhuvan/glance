@@ -19,7 +19,6 @@ import datetime
 import hashlib
 import httplib
 import json
-import unittest
 
 import stubout
 import webob
@@ -42,10 +41,11 @@ UUID1 = _gen_uuid()
 UUID2 = _gen_uuid()
 
 
-class TestRegistryDb(unittest.TestCase):
+class TestRegistryDb(test_utils.BaseTestCase):
 
     def setUp(self):
         """Establish a clean test environment"""
+        super(TestRegistryDb, self).setUp()
         self.stubs = stubout.StubOutForTesting()
         self.orig_engine = db_api._ENGINE
 
@@ -85,6 +85,7 @@ class TestRegistryDb(unittest.TestCase):
 
     def tearDown(self):
         """Clear the test environment"""
+        super(TestRegistryDb, self).setUp()
         db_api._ENGINE = self.orig_engine
         self.stubs.UnsetAll()
 
@@ -1856,6 +1857,21 @@ class TestRegistryAPI(base.IsolatedUnitTest):
         new_num_images = len(res_dict['images'])
         self.assertEquals(new_num_images, orig_num_images - 1)
 
+    def test_delete_image_response(self):
+        """Tests that the registry API delete returns the image metadata"""
+
+        image = self.FIXTURES[0]
+        req = webob.Request.blank('/images/%s' % image['id'])
+        req.method = 'DELETE'
+        res = req.get_response(self.api)
+
+        self.assertEquals(res.status_int, 200)
+        deleted_image = json.loads(res.body)['image']
+
+        self.assertEquals(image['id'], deleted_image['id'])
+        self.assertTrue(deleted_image['deleted'])
+        self.assertTrue(deleted_image['deleted_at'])
+
     def test_delete_image_not_existing(self):
         """
         Tests proper exception is raised if attempt to delete
@@ -3110,44 +3126,3 @@ class TestImageSerializer(base.IsolatedUnitTest):
         self.serializer.image_send_notification(17, 19, image_meta, req)
 
         self.assertTrue(called['notified'])
-
-
-class TestContextMiddleware(base.IsolatedUnitTest):
-    def _build_request(self, roles=None):
-        req = webob.Request.blank('/')
-        req.headers['x-auth-token'] = 'token1'
-        req.headers['x-identity-status'] = 'Confirmed'
-        req.headers['x-user-id'] = 'user1'
-        req.headers['x-tenant-id'] = 'tenant1'
-        _roles = roles or ['role1', 'role2']
-        req.headers['x-roles'] = ','.join(_roles)
-        return req
-
-    def _build_middleware(self, **extra_config):
-        for k, v in extra_config.items():
-            setattr(self.conf, k, v)
-        return context.ContextMiddleware(None, self.conf)
-
-    def test_header_parsing(self):
-        req = self._build_request()
-        self._build_middleware().process_request(req)
-        self.assertEqual(req.context.auth_tok, 'token1')
-        self.assertEqual(req.context.user, 'user1')
-        self.assertEqual(req.context.tenant, 'tenant1')
-        self.assertEqual(req.context.roles, ['role1', 'role2'])
-
-    def test_is_admin_flag(self):
-        # is_admin check should look for 'admin' role by default
-        req = self._build_request(roles=['admin', 'role2'])
-        self._build_middleware().process_request(req)
-        self.assertTrue(req.context.is_admin)
-
-        # without the 'admin' role, is_admin shoud be False
-        req = self._build_request()
-        self._build_middleware().process_request(req)
-        self.assertFalse(req.context.is_admin)
-
-        # if we change the admin_role attribute, we should be able to use it
-        req = self._build_request()
-        self._build_middleware(admin_role='role1').process_request(req)
-        self.assertTrue(req.context.is_admin)

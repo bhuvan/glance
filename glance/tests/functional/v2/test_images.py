@@ -59,10 +59,10 @@ class TestImages(functional.FunctionalTest):
         images = json.loads(response.text)['images']
         self.assertEqual(0, len(images))
 
-        # Create an image
+        # Create an image (with a deployer-defined property)
         path = self._url('/images')
         headers = self._headers({'content-type': 'application/json'})
-        data = json.dumps({'name': 'image-1'})
+        data = json.dumps({'name': 'image-1', 'type': 'kernel', 'foo': 'bar'})
         response = requests.post(path, headers=headers, data=data)
         self.assertEqual(200, response.status_code)
         image_location_header = response.headers['Location']
@@ -84,16 +84,24 @@ class TestImages(functional.FunctionalTest):
         self.assertEqual(200, response.status_code)
         image = json.loads(response.text)['image']
         self.assertEqual(image_id, image['id'])
+        self.assertEqual('bar', image['foo'])
+        self.assertTrue(image['created_at'])
+        self.assertTrue(image['updated_at'])
+        self.assertEqual(image['updated_at'], image['created_at'])
 
-        # The image should be mutable
+        # The image should be mutable, including adding new properties
         path = self._url('/images/%s' % image_id)
-        data = json.dumps({'name': 'image-2'})
+        data = json.dumps({'name': 'image-2', 'format': 'vhd',
+                           'foo': 'baz', 'ping': 'pong'})
         response = requests.put(path, headers=self._headers(), data=data)
         self.assertEqual(200, response.status_code)
 
         # Returned image entity should reflect the changes
         image = json.loads(response.text)['image']
         self.assertEqual('image-2', image['name'])
+        self.assertEqual('vhd', image['format'])
+        self.assertEqual('baz', image['foo'])
+        self.assertEqual('pong', image['ping'])
 
         # Updates should persist across requests
         path = self._url('/images/%s' % image_id)
@@ -102,6 +110,8 @@ class TestImages(functional.FunctionalTest):
         image = json.loads(response.text)['image']
         self.assertEqual(image_id, image['id'])
         self.assertEqual('image-2', image['name'])
+        self.assertEqual('baz', image['foo'])
+        self.assertEqual('pong', image['ping'])
 
         # Try to download data before its uploaded
         path = self._url('/images/%s/file' % image_id)
@@ -409,34 +419,29 @@ class TestImages(functional.FunctionalTest):
         self.stop_servers()
 
     def test_tag_lifecycle(self):
-        # Create an image for our tests
+        # Create an image with a tag
         path = self._url('/images')
         headers = self._headers({'Content-Type': 'application/json'})
-        data = json.dumps({'name': 'image-1'})
+        data = json.dumps({'name': 'image-1', 'tags': ['sniff']})
         response = requests.post(path, headers=headers, data=data)
         self.assertEqual(200, response.status_code)
         image_id = json.loads(response.text)['image']['id']
 
-        # List of image tags should be empty
-        path = self._url('/images/%s/tags' % image_id)
+        # Image should show a list with a single tag
+        path = self._url('/images/%s' % image_id)
         response = requests.get(path, headers=self._headers())
         self.assertEqual(200, response.status_code)
-        tags = json.loads(response.text)
-        self.assertEqual([], tags)
+        tags = json.loads(response.text)['image']['tags']
+        self.assertEqual(['sniff'], tags)
 
-        # Create a tag
-        path = self._url('/images/%s/tags/sniff' % image_id)
-        response = requests.put(path, headers=self._headers())
-        self.assertEqual(204, response.status_code)
-
-        # List should now have an entry
+        # Subcollection should also have one tag
         path = self._url('/images/%s/tags' % image_id)
         response = requests.get(path, headers=self._headers())
         self.assertEqual(200, response.status_code)
         tags = json.loads(response.text)
         self.assertEqual(['sniff'], tags)
 
-        # Create a more complex tag
+        # Create another more complex tag
         path = self._url('/images/%s/tags/someone%%40example.com' % image_id)
         response = requests.put(path, headers=self._headers())
         self.assertEqual(204, response.status_code)
@@ -446,6 +451,13 @@ class TestImages(functional.FunctionalTest):
         response = requests.get(path, headers=self._headers())
         self.assertEqual(200, response.status_code)
         tags = json.loads(response.text)
+        self.assertEqual(['sniff', 'someone@example.com'], tags)
+
+        # Double-check that the tags container on the image is populated
+        path = self._url('/images/%s' % image_id)
+        response = requests.get(path, headers=self._headers())
+        self.assertEqual(200, response.status_code)
+        tags = json.loads(response.text)['image']['tags']
         self.assertEqual(['sniff', 'someone@example.com'], tags)
 
         # The tag should be deletable

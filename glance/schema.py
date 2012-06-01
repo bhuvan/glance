@@ -42,6 +42,26 @@ _BASE_SCHEMA_PROPERTIES = {
             'description': 'Scope of image accessibility',
             'enum': ['public', 'private'],
         },
+        'created_at': {
+          'type': 'string',
+          'description': 'Date and time of image registration',
+          #TODO(bcwaldon): our jsonschema library doesn't seem to like the
+          # format attribute, figure out why!
+          #'format': 'date-time',
+        },
+        'updated_at': {
+          'type': 'string',
+          'description': 'Date and time of the last image modification',
+          #'format': 'date-time',
+        },
+        'tags': {
+            'type': 'array',
+            'description': 'List of strings related to the image',
+            'items': {
+                'type': 'string',
+                'maxLength': 255,
+            },
+        },
     },
     'access': {
         'tenant_id': {
@@ -58,15 +78,20 @@ _BASE_SCHEMA_PROPERTIES = {
 
 
 class API(object):
-    def __init__(self, base_properties=_BASE_SCHEMA_PROPERTIES):
+    def __init__(self, conf, base_properties=_BASE_SCHEMA_PROPERTIES):
+        self.conf = conf
         self.base_properties = base_properties
         self.schema_properties = copy.deepcopy(self.base_properties)
 
     def get_schema(self, name):
+        if name == 'image' and self.conf.allow_additional_image_properties:
+            additional = {'type': 'string'}
+        else:
+            additional = False
         return {
             'name': name,
             'properties': self.schema_properties[name],
-            'additionalProperties': False
+            'additionalProperties': additional
         }
 
     def set_custom_schema_properties(self, schema_name, custom_properties):

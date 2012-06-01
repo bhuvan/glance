@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import datetime
 import logging
 import uuid
 
@@ -61,10 +62,7 @@ class FakeDB(object):
             UUID2: [],
         }
         self.tags = {
-            UUID1: {
-                'ping': {'image_id': UUID1, 'value': 'ping'},
-                'pong': {'image_id': UUID1, 'value': 'pong'},
-            },
+            UUID1: ['ping', 'pong'],
             UUID2: [],
         }
 
@@ -88,6 +86,7 @@ class FakeDB(object):
         }
 
     def _image_format(self, image_id, **values):
+        dt = datetime.datetime.now()
         image = {
             'id': image_id,
             'name': 'image-name',
@@ -95,6 +94,9 @@ class FakeDB(object):
             'location': None,
             'status': 'queued',
             'is_public': False,
+            'created_at': dt,
+            'updated_at': dt,
+            'tags': [],
             'properties': [],
         }
         image.update(values)
@@ -139,6 +141,7 @@ class FakeDB(object):
         new_uuid = str(uuid.uuid4())
         image = self._image_format(new_uuid, **image_values)
         self.images[new_uuid] = image
+        self.tags[new_uuid] = image.pop('tags', [])
         LOG.info('Created image %s with values %s' %
                  (new_uuid, str(image_values)))
         return image
@@ -158,26 +161,31 @@ class FakeDB(object):
         return image
 
     def image_tag_get_all(self, context, image_id):
-        return [
-            {'image_id': image_id, 'value': 'ping'},
-            {'image_id': image_id, 'value': 'pong'},
-        ]
-
-    def image_tag_get(self, context, image_id, value):
         try:
-            return self.tags[image_id][value]
+            return self.tags[image_id]
         except KeyError:
             raise exception.NotFound()
 
+    def image_tag_get(self, context, image_id, value):
+        tags = self.image_tag_get_all(context, image_id)
+        if value in tags:
+            return value
+        else:
+            raise exception.NotFound()
+
+    def image_tag_set_all(self, context, image_id, values):
+        self.tags[image_id] = values
+
     def image_tag_create(self, context, image_id, value):
-        tag = {'image_id': image_id, 'value': value}
-        self.tags[image_id][value] = tag.copy()
-        return tag
+        tags = self.image_tag_get_all(context, image_id)
+        tags.append(value)
+        return value
 
     def image_tag_delete(self, context, image_id, value):
+        tags = self.image_tag_get_all(context, image_id)
         try:
-            del self.tags[image_id][value]
-        except KeyError:
+            tags.remove(value)
+        except ValueError:
             raise exception.NotFound()
 
 
