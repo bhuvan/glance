@@ -28,9 +28,9 @@ except ImportError:
 import stubout
 
 from glance.common import exception
-from glance.common import utils as common_utils
 from glance import notifier
 import glance.notifier.notify_kombu
+from glance.openstack.common import importutils
 from glance.tests import utils
 
 
@@ -38,10 +38,9 @@ class TestInvalidNotifier(utils.BaseTestCase):
     """Test that notifications are generated appropriately"""
 
     def test_cannot_create(self):
-        conf = utils.TestConfigOpts({"notifier_strategy": "invalid_notifier"})
+        self.config(notifier_strategy="invalid_notifier")
         self.assertRaises(exception.InvalidNotifierStrategy,
-                          notifier.Notifier,
-                          conf)
+                          notifier.Notifier)
 
 
 class TestLoggingNotifier(utils.BaseTestCase):
@@ -49,10 +48,10 @@ class TestLoggingNotifier(utils.BaseTestCase):
 
     def setUp(self):
         super(TestLoggingNotifier, self).setUp()
-        conf = utils.TestConfigOpts({"notifier_strategy": "logging"})
+        self.config(notifier_strategy="logging")
         self.called = False
         self.logger = logging.getLogger("glance.notifier.logging_notifier")
-        self.notifier = notifier.Notifier(conf)
+        self.notifier = notifier.Notifier()
 
     def _called(self, msg):
         self.called = msg
@@ -81,8 +80,8 @@ class TestNoopNotifier(utils.BaseTestCase):
 
     def setUp(self):
         super(TestNoopNotifier, self).setUp()
-        conf = utils.TestConfigOpts({"notifier_strategy": "noop"})
-        self.notifier = notifier.Notifier(conf)
+        self.config(notifier_strategy="noop")
+        self.notifier = notifier.Notifier()
 
     def test_warn(self):
         self.notifier.warn("test_event", "test_message")
@@ -105,16 +104,15 @@ class TestRabbitNotifier(utils.BaseTestCase):
             rabbit_self.connection = 'fake_connection'
             return None
 
-        self.notify_kombu = common_utils.import_object(
-                                        "glance.notifier.notify_kombu")
+        self.notify_kombu = importutils.import_module("glance.notifier."
+                                                      "notify_kombu")
         self.notify_kombu.RabbitStrategy._send_message = self._send_message
         self.notify_kombu.RabbitStrategy._connect = _fake_connect
         self.called = False
-        self.conf = utils.TestConfigOpts({"notifier_strategy": "rabbit",
-                                          "rabbit_retry_backoff": 0,
-                                          "rabbit_notification_topic":
-                                                "fake_topic"})
-        self.notifier = notifier.Notifier(self.conf)
+        self.config(notifier_strategy="rabbit",
+                    rabbit_retry_backoff=0,
+                    rabbit_notification_topic="fake_topic")
+        self.notifier = notifier.Notifier()
 
     def _send_message(self, message, routing_key):
         self.called = {
@@ -161,7 +159,7 @@ class TestRabbitNotifier(utils.BaseTestCase):
             raise MyException('meow')
 
         self.notify_kombu.RabbitStrategy._connect = _connect
-        self.assertRaises(MyException, notifier.Notifier, self.conf)
+        self.assertRaises(MyException, notifier.Notifier)
 
     def test_timeout_on_connect_reconnects(self):
         info = {'num_called': 0}
@@ -174,7 +172,7 @@ class TestRabbitNotifier(utils.BaseTestCase):
             rabbit_self.connection = 'fake_connection'
 
         self.notify_kombu.RabbitStrategy._connect = _connect
-        notifier_ = notifier.Notifier(self.conf)
+        notifier_ = notifier.Notifier()
         notifier_.error('test_event', 'test_message')
 
         if self.called is False:
@@ -198,7 +196,7 @@ class TestRabbitNotifier(utils.BaseTestCase):
             rabbit_self.connection = 'fake_connection'
 
         self.notify_kombu.RabbitStrategy._connect = _connect
-        notifier_ = notifier.Notifier(self.conf)
+        notifier_ = notifier.Notifier()
         notifier_.error('test_event', 'test_message')
 
         if self.called is False:
@@ -216,7 +214,7 @@ class TestRabbitNotifier(utils.BaseTestCase):
             raise MyException('meow')
 
         self.notify_kombu.RabbitStrategy._send_message = _send_message
-        notifier_ = notifier.Notifier(self.conf)
+        notifier_ = notifier.Notifier()
         self.assertRaises(MyException, notifier_.error, 'a', 'b')
 
     def test_timeout_on_send_message_reconnects(self):
@@ -235,7 +233,7 @@ class TestRabbitNotifier(utils.BaseTestCase):
 
         self.notify_kombu.RabbitStrategy._connect = _connect
         self.notify_kombu.RabbitStrategy._send_message = _send_message
-        notifier_ = notifier.Notifier(self.conf)
+        notifier_ = notifier.Notifier()
         notifier_.error('test_event', 'test_message')
 
         if self.called is False:
@@ -265,7 +263,7 @@ class TestRabbitNotifier(utils.BaseTestCase):
 
         self.notify_kombu.RabbitStrategy._connect = _connect
         self.notify_kombu.RabbitStrategy._send_message = _send_message
-        notifier_ = notifier.Notifier(self.conf)
+        notifier_ = notifier.Notifier()
         notifier_.error('test_event', 'test_message')
 
         if self.called is False:
@@ -302,8 +300,8 @@ class TestQpidNotifier(utils.BaseTestCase):
         qpid.messaging.Sender = lambda *_x, **_y: self.mock_sender
         qpid.messaging.Receiver = lambda *_x, **_y: self.mock_receiver
 
-        self.notify_qpid = common_utils.import_object(
-                                        "glance.notifier.notify_qpid")
+        self.notify_qpid = importutils.import_module("glance.notifier."
+                                                     "notify_qpid")
 
     def tearDown(self):
         super(TestQpidNotifier, self).tearDown()
@@ -338,8 +336,8 @@ class TestQpidNotifier(utils.BaseTestCase):
 
         self.mocker.ReplayAll()
 
-        conf = utils.TestConfigOpts({"notifier_strategy": "qpid"})
-        notifier = self.notify_qpid.QpidStrategy(conf)
+        self.config(notifier_strategy="qpid")
+        notifier = self.notify_qpid.QpidStrategy()
         if priority == 'info':
             notifier.info(test_msg)
         elif priority == 'warn':
@@ -382,11 +380,10 @@ class TestRabbitContentType(utils.BaseTestCase):
         self.stubs.Set(glance.notifier.notify_kombu.RabbitStrategy, '_connect',
                        _fake_connect)
         self.called = False
-        self.conf = utils.TestConfigOpts({"notifier_strategy": "rabbit",
-                                          "rabbit_retry_backoff": 0,
-                                          "rabbit_notification_topic":
-                                                "fake_topic"})
-        self.notifier = notifier.Notifier(self.conf)
+        self.config(notifier_strategy="rabbit",
+                    rabbit_retry_backoff=0,
+                    rabbit_notification_topic="fake_topic")
+        self.notifier = notifier.Notifier()
 
     def _fake_exchange(self):
         class Dummy(object):

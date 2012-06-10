@@ -20,7 +20,16 @@ import webob.exc
 from glance.common import exception
 from glance.common import wsgi
 from glance.openstack.common import cfg
-from glance.registry.db import api as db_api
+from glance.db.sqlalchemy import api as db_api
+
+context_opts = [
+    cfg.BoolOpt('owner_is_tenant', default=True),
+    cfg.StrOpt('admin_role', default='admin'),
+    cfg.BoolOpt('allow_anonymous_access', default=False),
+    ]
+
+CONF = cfg.CONF
+CONF.register_opts(context_opts)
 
 
 class RequestContext(object):
@@ -129,15 +138,7 @@ class RequestContext(object):
 
 class ContextMiddleware(wsgi.Middleware):
 
-    opts = [
-        cfg.BoolOpt('owner_is_tenant', default=True),
-        cfg.StrOpt('admin_role', default='admin'),
-        cfg.BoolOpt('allow_anonymous_access', default=False),
-    ]
-
     def __init__(self, app, conf, **local_conf):
-        self.conf = conf
-        self.conf.register_opts(self.opts)
         super(ContextMiddleware, self).__init__(app)
 
     def process_request(self, req):
@@ -154,7 +155,7 @@ class ContextMiddleware(wsgi.Middleware):
         """
         if req.headers.get('X-Identity-Status') == 'Confirmed':
             req.context = self._get_authenticated_context(req)
-        elif self.conf.allow_anonymous_access:
+        elif CONF.allow_anonymous_access:
             req.context = self._get_anonymous_context()
         else:
             raise webob.exc.HTTPUnauthorized()
@@ -182,9 +183,9 @@ class ContextMiddleware(wsgi.Middleware):
             'user': req.headers.get('X-User-Id'),
             'tenant': req.headers.get('X-Tenant-Id'),
             'roles': roles,
-            'is_admin': self.conf.admin_role in roles,
+            'is_admin': CONF.admin_role in roles,
             'auth_tok': req.headers.get('X-Auth-Token', deprecated_token),
-            'owner_is_tenant': self.conf.owner_is_tenant,
+            'owner_is_tenant': CONF.owner_is_tenant,
         }
 
         return RequestContext(**kwargs)
@@ -193,7 +194,6 @@ class ContextMiddleware(wsgi.Middleware):
 class UnauthenticatedContextMiddleware(wsgi.Middleware):
 
     def __init__(self, app, conf, **local_conf):
-        self.conf = conf
         super(UnauthenticatedContextMiddleware, self).__init__(app)
 
     def process_request(self, req):

@@ -22,9 +22,13 @@ import shutil
 import stubout
 
 from glance import store
+from glance.openstack.common import cfg
 from glance.store import location
+from glance.store import filesystem
 from glance.tests import stubs
 from glance.tests import utils as test_utils
+
+CONF = cfg.CONF
 
 
 class StoreClearingUnitTest(test_utils.BaseTestCase):
@@ -34,6 +38,7 @@ class StoreClearingUnitTest(test_utils.BaseTestCase):
         # Ensure stores + locations cleared
         store.STORES = {}
         location.SCHEME_TO_CLS_MAP = {}
+        store.create_stores()
 
     def tearDown(self):
         super(StoreClearingUnitTest, self).tearDown()
@@ -50,21 +55,17 @@ class IsolatedUnitTest(StoreClearingUnitTest):
     """
 
     def setUp(self):
-        super(IsolatedUnitTest, self).setUp()
         self.test_id, self.test_dir = test_utils.get_isolated_test_env()
         self.stubs = stubout.StubOutForTesting()
         policy_file = self._copy_data_file('policy.json', self.test_dir)
-        options = {'sql_connection': 'sqlite://',
-                   'verbose': False,
-                   'debug': False,
-                   'default_store': 'filesystem',
-                   'known_stores': test_utils.get_default_stores(),
-                   'filesystem_store_datadir': os.path.join(self.test_dir),
-                   'policy_file': policy_file}
-        self.conf = test_utils.TestConfigOpts(options)
-        stubs.stub_out_registry_and_store_server(self.stubs,
-                                                 self.conf,
-                                                 self.test_dir)
+        self.config(sql_connection='sqlite://',
+                    verbose=False,
+                    debug=False,
+                    default_store='filesystem',
+                    filesystem_store_datadir=os.path.join(self.test_dir),
+                    policy_file=policy_file)
+        super(IsolatedUnitTest, self).setUp()
+        stubs.stub_out_registry_and_store_server(self.stubs, self.test_dir)
 
     def _copy_data_file(self, file_name, dst_dir):
         src_file_name = os.path.join('glance/tests/etc', file_name)
@@ -73,7 +74,7 @@ class IsolatedUnitTest(StoreClearingUnitTest):
         return dst_file_name
 
     def set_policy_rules(self, rules):
-        fap = open(self.conf.policy_file, 'w')
+        fap = open(CONF.policy_file, 'w')
         fap.write(json.dumps(rules))
         fap.close()
 

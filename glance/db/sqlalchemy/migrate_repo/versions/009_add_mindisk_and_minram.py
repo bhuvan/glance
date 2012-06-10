@@ -17,10 +17,10 @@
 
 from migrate.changeset import *
 from sqlalchemy import *
+from sqlalchemy.sql import and_, not_
 
-from glance.registry.db.migrate_repo.schema import (
-    Boolean, DateTime, BigInteger, Integer, String,
-    Text, from_migration_import)
+from glance.db.sqlalchemy.migrate_repo.schema import (
+    Boolean, DateTime, Integer, String, Text, from_migration_import)
 
 
 def get_images_table(meta):
@@ -33,7 +33,7 @@ def get_images_table(meta):
         Column('name', String(255)),
         Column('disk_format', String(20)),
         Column('container_format', String(20)),
-        Column('size', BigInteger()),
+        Column('size', Integer()),
         Column('status', String(30), nullable=False),
         Column('is_public', Boolean(), nullable=False, default=False,
                index=True),
@@ -43,18 +43,21 @@ def get_images_table(meta):
         Column('deleted_at', DateTime()),
         Column('deleted', Boolean(), nullable=False, default=False,
                index=True),
+        Column('checksum', String(32)),
+        Column('min_disk', Integer(), default=0),
+        Column('min_ram', Integer(), default=0),
         mysql_engine='InnoDB',
-        useexisting=True)
+        extend_existing=True)
 
     return images
 
 
 def get_image_properties_table(meta):
     """
-    No changes to the image properties table from 002...
+    No changes to the image properties table from 008...
     """
     (define_image_properties_table,) = from_migration_import(
-        '002_add_image_properties_table', ['define_image_properties_table'])
+        '008_add_image_members_table', ['define_image_properties_table'])
 
     image_properties = define_image_properties_table(meta)
     return image_properties
@@ -64,36 +67,20 @@ def upgrade(migrate_engine):
     meta = MetaData()
     meta.bind = migrate_engine
 
-    # No changes to SQLite stores are necessary, since
-    # there is no BIG INTEGER type in SQLite. Unfortunately,
-    # running the Python 005_size_big_integer.py migration script
-    # on a SQLite datastore results in an error in the sa-migrate
-    # code that does the workarounds for SQLite not having
-    # ALTER TABLE MODIFY COLUMN ability
+    images = get_images_table(meta)
 
-    dialect = migrate_engine.url.get_dialect().name
+    min_disk = Column('min_disk', Integer(), default=0)
+    min_disk.create(images)
 
-    if not dialect.startswith('sqlite'):
-        (get_images_table,) = from_migration_import(
-            '003_add_disk_format', ['get_images_table'])
-
-        images = get_images_table(meta)
-        images.columns['size'].alter(type=BigInteger())
+    min_ram = Column('min_ram', Integer(), default=0)
+    min_ram.create(images)
 
 
 def downgrade(migrate_engine):
     meta = MetaData()
     meta.bind = migrate_engine
 
-    # No changes to SQLite stores are necessary, since
-    # there is no BIG INTEGER type in SQLite. Unfortunately,
-    # running the Python 005_size_big_integer.py migration script
-    # on a SQLite datastore results in an error in the sa-migrate
-    # code that does the workarounds for SQLite not having
-    # ALTER TABLE MODIFY COLUMN ability
+    images = get_images_table(meta)
 
-    dialect = migrate_engine.url.get_dialect().name
-
-    if not dialect.startswith('sqlite'):
-        images = get_images_table(meta)
-        images.columns['size'].alter(type=Integer())
+    images.columns['min_disk'].drop()
+    images.columns['min_ram'].drop()

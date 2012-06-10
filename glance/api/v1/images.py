@@ -66,6 +66,9 @@ IMAGE_SIZE_CAP = 1 << 50
 # identity check (not equality).
 default_store_opt = cfg.StrOpt('default_store', default='file')
 
+CONF = cfg.CONF
+CONF.register_opt(default_store_opt)
+
 
 class Controller(controller.BaseController):
     """
@@ -86,14 +89,12 @@ class Controller(controller.BaseController):
         DELETE /images/<ID> -- Delete the image with id <ID>
     """
 
-    def __init__(self, conf):
-        self.conf = conf
-        self.conf.register_opt(default_store_opt)
-        create_stores(self.conf)
-        self.verify_scheme_or_exit(self.conf.default_store)
-        self.notifier = notifier.Notifier(conf)
-        registry.configure_registry_client(conf)
-        self.policy = policy.Enforcer(conf)
+    def __init__(self):
+        create_stores()
+        self.verify_scheme_or_exit(CONF.default_store)
+        self.notifier = notifier.Notifier()
+        registry.configure_registry_client()
+        self.policy = policy.Enforcer()
 
     def _enforce(self, req, action):
         """Authorize an action against our policies"""
@@ -364,8 +365,7 @@ class Controller(controller.BaseController):
                                "x-image-meta-size header"))
                 image_size = 0
 
-        scheme = req.headers.get('x-image-meta-store',
-                                 self.conf.default_store)
+        scheme = req.headers.get('x-image-meta-store', CONF.default_store)
 
         store = self.get_store_or_400(req, scheme)
 
@@ -717,7 +717,7 @@ class Controller(controller.BaseController):
         # See https://bugs.launchpad.net/glance/+bug/747799
         try:
             if image['location']:
-                schedule_delete_from_backend(image['location'], self.conf,
+                schedule_delete_from_backend(image['location'],
                                              req.context, id)
             image = registry.delete_image_metadata(req.context, id)
         except exception.NotFound, e:
@@ -809,9 +809,8 @@ class ImageDeserializer(wsgi.JSONRequestDeserializer):
 class ImageSerializer(wsgi.JSONResponseSerializer):
     """Handles serialization of specific controller method responses."""
 
-    def __init__(self, conf):
-        self.conf = conf
-        self.notifier = notifier.Notifier(conf)
+    def __init__(self):
+        self.notifier = notifier.Notifier()
 
     def _inject_location_header(self, response, image_meta):
         location = self._get_image_location(image_meta)
@@ -942,8 +941,8 @@ class ImageSerializer(wsgi.JSONResponseSerializer):
         return response
 
 
-def create_resource(conf):
+def create_resource():
     """Images resource factory method"""
     deserializer = ImageDeserializer()
-    serializer = ImageSerializer(conf)
-    return wsgi.Resource(Controller(conf), deserializer, serializer)
+    serializer = ImageSerializer()
+    return wsgi.Resource(Controller(), deserializer, serializer)

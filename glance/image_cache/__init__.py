@@ -24,8 +24,20 @@ import logging
 from glance.common import exception
 from glance.common import utils
 from glance.openstack.common import cfg
+from glance.openstack.common import importutils
 
 logger = logging.getLogger(__name__)
+
+image_cache_opts = [
+    cfg.StrOpt('image_cache_driver', default='sqlite'),
+    cfg.IntOpt('image_cache_max_size', default=10 * (1024 ** 3)),  # 10 GB
+    cfg.IntOpt('image_cache_stall_time', default=86400),  # 24 hours
+    cfg.StrOpt('image_cache_dir'),
+    ]
+
+CONF = cfg.CONF
+CONF.register_opts(image_cache_opts)
+
 DEFAULT_MAX_CACHE_SIZE = 10 * 1024 * 1024 * 1024  # 10 GB
 
 
@@ -33,36 +45,27 @@ class ImageCache(object):
 
     """Provides an LRU cache for image data."""
 
-    opts = [
-        cfg.StrOpt('image_cache_driver', default='sqlite'),
-        cfg.IntOpt('image_cache_max_size', default=10 * (1024 ** 3)),  # 10 GB
-        cfg.IntOpt('image_cache_stall_time', default=86400),  # 24 hours
-        cfg.StrOpt('image_cache_dir'),
-        ]
-
-    def __init__(self, conf):
-        self.conf = conf
-        self.conf.register_opts(self.opts)
+    def __init__(self):
         self.init_driver()
 
     def init_driver(self):
         """
         Create the driver for the cache
         """
-        driver_name = self.conf.image_cache_driver
+        driver_name = CONF.image_cache_driver
         driver_module = (__name__ + '.drivers.' + driver_name + '.Driver')
         try:
-            self.driver_class = utils.import_class(driver_module)
+            self.driver_class = importutils.import_class(driver_module)
             logger.info(_("Image cache loaded driver '%s'.") %
                         driver_name)
-        except exception.ImportFailure, import_err:
+        except ImportError, import_err:
             logger.warn(_("Image cache driver "
                           "'%(driver_name)s' failed to load. "
                           "Got error: '%(import_err)s.") % locals())
 
             driver_module = __name__ + '.drivers.sqlite.Driver'
             logger.info(_("Defaulting to SQLite driver."))
-            self.driver_class = utils.import_class(driver_module)
+            self.driver_class = importutils.import_class(driver_module)
         self.configure_driver()
 
     def configure_driver(self):
@@ -71,7 +74,7 @@ class ImageCache(object):
         fall back to using the SQLite driver which has no odd dependencies
         """
         try:
-            self.driver = self.driver_class(self.conf)
+            self.driver = self.driver_class()
             self.driver.configure()
         except exception.BadDriverConfiguration, config_err:
             driver_module = self.driver_class.__module__
@@ -80,8 +83,8 @@ class ImageCache(object):
                           "Got error: '%(config_err)s") % locals())
             logger.info(_("Defaulting to SQLite driver."))
             default_module = __name__ + '.drivers.sqlite.Driver'
-            self.driver_class = utils.import_class(default_module)
-            self.driver = self.driver_class(self.conf)
+            self.driver_class = importutils.import_class(default_module)
+            self.driver = self.driver_class()
             self.driver.configure()
 
     def is_cached(self, image_id):
@@ -157,7 +160,7 @@ class ImageCache(object):
         size. Returns a tuple containing the total number of cached
         files removed and the total size of all pruned image files.
         """
-        max_size = self.conf.image_cache_max_size
+        max_size = CONF.image_cache_max_size
         current_size = self.driver.get_cache_size()
         if max_size > current_size:
             logger.debug(_("Image cache has free space, skipping prune..."))

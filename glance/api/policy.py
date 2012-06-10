@@ -22,26 +22,26 @@ import logging
 import os.path
 
 from glance.common import exception
-from glance.common import policy
 from glance.openstack.common import cfg
+from glance.openstack.common import policy
 
 logger = logging.getLogger(__name__)
+
+policy_opts = (
+    cfg.StrOpt('policy_file', default=None),
+    cfg.StrOpt('policy_default_rule', default='default'),
+    )
+
+CONF = cfg.CONF
+CONF.register_opts(policy_opts)
 
 
 class Enforcer(object):
     """Responsible for loading and enforcing rules"""
 
-    policy_opts = (
-        cfg.StrOpt('policy_file', default=None),
-        cfg.StrOpt('policy_default_rule', default='default'),
-    )
-
-    def __init__(self, conf):
-        for opt in self.policy_opts:
-            conf.register_opt(opt)
-
-        self.default_rule = conf.policy_default_rule
-        self.policy_path = self._find_policy_file(conf)
+    def __init__(self):
+        self.default_rule = CONF.policy_default_rule
+        self.policy_path = self._find_policy_file()
         self.policy_file_mtime = None
         self.policy_file_contents = None
 
@@ -56,12 +56,12 @@ class Enforcer(object):
         self.set_rules(rules)
 
     @staticmethod
-    def _find_policy_file(conf):
+    def _find_policy_file():
         """Locate the policy json data file"""
-        if conf.policy_file:
-            return conf.policy_file
+        if CONF.policy_file:
+            return CONF.policy_file
 
-        policy_file = conf.find_file('policy.json')
+        policy_file = CONF.find_file('policy.json')
         if not policy_file:
             raise cfg.ConfigFilesNotFoundError(('policy.json',))
 
@@ -99,7 +99,5 @@ class Enforcer(object):
             'tenant': context.tenant,
         }
 
-        try:
-            policy.enforce(match_list, target, credentials)
-        except policy.NotAuthorized:
-            raise exception.Forbidden(action=action)
+        policy.enforce(match_list, target, credentials,
+                       exception.Forbidden, action=action)

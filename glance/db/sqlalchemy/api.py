@@ -35,10 +35,12 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import or_, and_
 
 from glance.common import exception
-from glance.common import utils
+from glance import db
+from glance.db.sqlalchemy import migration
+from glance.db.sqlalchemy import models
 from glance.openstack.common import cfg
-from glance.registry.db import migration
-from glance.registry.db import models
+from glance.openstack.common import timeutils
+
 
 _ENGINE = None
 _MAKER = None
@@ -66,11 +68,13 @@ STATUSES = ['active', 'saving', 'queued', 'killed', 'pending_delete',
 
 db_opts = [
     cfg.IntOpt('sql_idle_timeout', default=3600),
-    cfg.StrOpt('sql_connection', default='sqlite:///glance.sqlite'),
     cfg.IntOpt('sql_max_retries', default=10),
     cfg.IntOpt('sql_retry_interval', default=1),
     cfg.BoolOpt('db_auto_create', default=True),
     ]
+
+CONF = cfg.CONF
+CONF.register_opts(db_opts)
 
 
 class MySQLPingListener(object):
@@ -94,24 +98,18 @@ class MySQLPingListener(object):
                 raise
 
 
-def configure_db(conf):
+def configure_db():
     """
     Establish the database, create an engine if needed, and
     register the models.
-
-    :param conf: Mapping of configuration options
     """
     global _ENGINE, sa_logger, logger, _MAX_RETRIES, _RETRY_INTERVAL
     if not _ENGINE:
-        for opt in db_opts:
-            # avoid duplicate registration
-            if not opt.name in conf:
-                conf.register_opt(opt)
-        sql_connection = conf.sql_connection
-        _MAX_RETRIES = conf.sql_max_retries
-        _RETRY_INTERVAL = conf.sql_retry_interval
+        sql_connection = CONF.sql_connection
+        _MAX_RETRIES = CONF.sql_max_retries
+        _RETRY_INTERVAL = CONF.sql_retry_interval
         connection_dict = sqlalchemy.engine.url.make_url(sql_connection)
-        engine_args = {'pool_recycle': conf.sql_idle_timeout,
+        engine_args = {'pool_recycle': CONF.sql_idle_timeout,
                        'echo': False,
                        'convert_unicode': True
                        }
@@ -130,16 +128,16 @@ def configure_db(conf):
             raise
 
         sa_logger = logging.getLogger('sqlalchemy.engine')
-        if conf.debug:
+        if CONF.debug:
             sa_logger.setLevel(logging.DEBUG)
-        elif conf.verbose:
+        elif CONF.verbose:
             sa_logger.setLevel(logging.INFO)
 
-        if conf.db_auto_create:
+        if CONF.db_auto_create:
             logger.info('auto-creating glance registry DB')
             models.register_models(_ENGINE)
             try:
-                migration.version_control(conf)
+                migration.version_control()
             except exception.DatabaseMigrationError:
                 # only arises when the DB exists and is under version control
                 pass
@@ -411,7 +409,7 @@ def image_get_all(context, filters=None, marker=None, limit=None,
     if 'changes-since' in filters:
         # normalize timestamp to UTC, as sqlalchemy doesn't appear to
         # respect timezone offsets
-        changes_since = utils.normalize_time(filters.pop('changes-since'))
+        changes_since = timeutils.normalize_time(filters.pop('changes-since'))
         query = query.filter(models.Image.updated_at > changes_since)
         showing_deleted = True
 

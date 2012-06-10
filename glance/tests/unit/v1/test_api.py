@@ -28,9 +28,10 @@ from glance.api.v1 import images
 from glance.api.v1 import router
 from glance.common import context
 from glance.common import utils
+from glance.openstack.common import timeutils
 from glance.registry.api import v1 as rserver
-from glance.registry.db import api as db_api
-from glance.registry.db import models as db_models
+from glance.db.sqlalchemy import api as db_api
+from glance.db.sqlalchemy import models as db_models
 from glance.tests import utils as test_utils
 from glance.tests.unit import base
 
@@ -55,16 +56,13 @@ class TestRegistryDb(test_utils.BaseTestCase):
         API controller results in a) an Exception being thrown and b)
         a message being logged to the registry log file...
         """
-        bad_conf = test_utils.TestConfigOpts({
-                'verbose': True,
-                'debug': True,
-                'sql_connection': 'baddriver:///'
-                })
+        self.config(verbose=True, debug=True, sql_connection='baddriver:///')
+
         # We set this to None to trigger a reconfigure, otherwise
         # other modules may have already correctly configured the DB
         db_api._ENGINE = None
         self.assertRaises((ImportError, exc.ArgumentError),
-            db_api.configure_db, bad_conf)
+                          db_api.configure_db)
         exc_raised = False
         self.log_written = False
 
@@ -74,7 +72,7 @@ class TestRegistryDb(test_utils.BaseTestCase):
 
         self.stubs.Set(db_api.logger, 'error', fake_log_error)
         try:
-            api_obj = rserver.API(bad_conf)
+            api_obj = rserver.API(None)
         except exc.ArgumentError:
             exc_raised = True
         except ImportError:
@@ -94,8 +92,8 @@ class TestRegistryAPI(base.IsolatedUnitTest):
     def setUp(self):
         """Establish a clean test environment"""
         super(TestRegistryAPI, self).setUp()
-        self.api = context.UnauthenticatedContextMiddleware(
-                rserver.API(self.conf), self.conf)
+        self.api = context.UnauthenticatedContextMiddleware(rserver.API(None),
+                                                            None)
         self.FIXTURES = [
             {'id': UUID1,
              'name': 'fake image #1',
@@ -103,8 +101,8 @@ class TestRegistryAPI(base.IsolatedUnitTest):
              'disk_format': 'ami',
              'container_format': 'ami',
              'is_public': False,
-             'created_at': datetime.datetime.utcnow(),
-             'updated_at': datetime.datetime.utcnow(),
+             'created_at': timeutils.utcnow(),
+             'updated_at': timeutils.utcnow(),
              'deleted_at': None,
              'deleted': False,
              'checksum': None,
@@ -119,8 +117,8 @@ class TestRegistryAPI(base.IsolatedUnitTest):
              'disk_format': 'vhd',
              'container_format': 'ovf',
              'is_public': True,
-             'created_at': datetime.datetime.utcnow(),
-             'updated_at': datetime.datetime.utcnow(),
+             'created_at': timeutils.utcnow(),
+             'updated_at': timeutils.utcnow(),
              'deleted_at': None,
              'deleted': False,
              'checksum': None,
@@ -130,7 +128,7 @@ class TestRegistryAPI(base.IsolatedUnitTest):
              'location': "file:///%s/%s" % (self.test_dir, UUID2),
              'properties': {}}]
         self.context = context.RequestContext(is_admin=True)
-        db_api.configure_db(self.conf)
+        db_api.configure_db()
         self.destroy_fixtures()
         self.create_fixtures()
 
@@ -234,9 +232,9 @@ class TestRegistryAPI(base.IsolatedUnitTest):
         Tests that the /images registry API returns list of
         public images that conforms to a marker query param
         """
-        time1 = datetime.datetime.utcnow() + datetime.timedelta(seconds=5)
-        time2 = datetime.datetime.utcnow() + datetime.timedelta(seconds=4)
-        time3 = datetime.datetime.utcnow()
+        time1 = timeutils.utcnow() + datetime.timedelta(seconds=5)
+        time2 = timeutils.utcnow() + datetime.timedelta(seconds=4)
+        time3 = timeutils.utcnow()
 
         UUID3 = _gen_uuid()
         extra_fixture = {'id': UUID3,
@@ -454,9 +452,9 @@ class TestRegistryAPI(base.IsolatedUnitTest):
         Tests that the /images registry API returns list of
         public images that conforms to a default sort key/dir
         """
-        time1 = datetime.datetime.utcnow() + datetime.timedelta(seconds=5)
-        time2 = datetime.datetime.utcnow() + datetime.timedelta(seconds=4)
-        time3 = datetime.datetime.utcnow()
+        time1 = timeutils.utcnow() + datetime.timedelta(seconds=5)
+        time2 = timeutils.utcnow() + datetime.timedelta(seconds=4)
+        time3 = timeutils.utcnow()
 
         UUID3 = _gen_uuid()
         extra_fixture = {'id': UUID3,
@@ -732,7 +730,7 @@ class TestRegistryAPI(base.IsolatedUnitTest):
         Tests that the /images registry API returns list of
         public images sorted by created_at in ascending order.
         """
-        now = datetime.datetime.utcnow()
+        now = timeutils.utcnow()
         time1 = now + datetime.timedelta(seconds=5)
         time2 = now
 
@@ -778,7 +776,7 @@ class TestRegistryAPI(base.IsolatedUnitTest):
         Tests that the /images registry API returns list of
         public images sorted by updated_at in descending order.
         """
-        now = datetime.datetime.utcnow()
+        now = timeutils.utcnow()
         time1 = now + datetime.timedelta(seconds=5)
         time2 = now
 
@@ -1260,18 +1258,18 @@ class TestRegistryAPI(base.IsolatedUnitTest):
         Tests that the /images/detail registry API returns list of
         public images that have a size less than or equal to size_max
         """
-        dt1 = datetime.datetime.utcnow() - datetime.timedelta(1)
-        iso1 = utils.isotime(dt1)
+        dt1 = timeutils.utcnow() - datetime.timedelta(1)
+        iso1 = timeutils.isotime(dt1)
 
-        dt2 = datetime.datetime.utcnow() + datetime.timedelta(1)
-        iso2 = utils.isotime(dt2)
+        dt2 = timeutils.utcnow() + datetime.timedelta(1)
+        iso2 = timeutils.isotime(dt2)
 
-        image_ts = datetime.datetime.utcnow() + datetime.timedelta(2)
+        image_ts = timeutils.utcnow() + datetime.timedelta(2)
         hour_before = image_ts.strftime('%Y-%m-%dT%H:%M:%S%%2B01:00')
         hour_after = image_ts.strftime('%Y-%m-%dT%H:%M:%S-01:00')
 
-        dt4 = datetime.datetime.utcnow() + datetime.timedelta(3)
-        iso4 = utils.isotime(dt4)
+        dt4 = timeutils.utcnow() + datetime.timedelta(3)
+        iso4 = timeutils.isotime(dt4)
 
         UUID3 = _gen_uuid()
         extra_fixture = {'id': UUID3,
@@ -1963,8 +1961,8 @@ class TestGlanceAPI(base.IsolatedUnitTest):
     def setUp(self):
         """Establish a clean test environment"""
         super(TestGlanceAPI, self).setUp()
-        self.api = context.UnauthenticatedContextMiddleware(
-                router.API(self.conf), self.conf)
+        self.api = context.UnauthenticatedContextMiddleware(router.API(None),
+                                                            None)
         self.FIXTURES = [
             {'id': UUID1,
              'name': 'fake image #1',
@@ -1972,8 +1970,8 @@ class TestGlanceAPI(base.IsolatedUnitTest):
              'disk_format': 'ami',
              'container_format': 'ami',
              'is_public': False,
-             'created_at': datetime.datetime.utcnow(),
-             'updated_at': datetime.datetime.utcnow(),
+             'created_at': timeutils.utcnow(),
+             'updated_at': timeutils.utcnow(),
              'deleted_at': None,
              'deleted': False,
              'checksum': None,
@@ -1986,8 +1984,8 @@ class TestGlanceAPI(base.IsolatedUnitTest):
              'disk_format': 'vhd',
              'container_format': 'ovf',
              'is_public': True,
-             'created_at': datetime.datetime.utcnow(),
-             'updated_at': datetime.datetime.utcnow(),
+             'created_at': timeutils.utcnow(),
+             'updated_at': timeutils.utcnow(),
              'deleted_at': None,
              'deleted': False,
              'checksum': None,
@@ -1995,7 +1993,7 @@ class TestGlanceAPI(base.IsolatedUnitTest):
              'location': "file:///%s/%s" % (self.test_dir, UUID2),
              'properties': {}}]
         self.context = context.RequestContext(is_admin=True)
-        db_api.configure_db(self.conf)
+        db_api.configure_db()
         self.destroy_fixtures()
         self.create_fixtures()
 
@@ -2522,18 +2520,18 @@ class TestGlanceAPI(base.IsolatedUnitTest):
         Tests that the /images/detail registry API returns list of
         public images that have a size less than or equal to size_max
         """
-        dt1 = datetime.datetime.utcnow() - datetime.timedelta(1)
-        iso1 = utils.isotime(dt1)
+        dt1 = timeutils.utcnow() - datetime.timedelta(1)
+        iso1 = timeutils.isotime(dt1)
 
-        dt2 = datetime.datetime.utcnow() + datetime.timedelta(1)
-        iso2 = utils.isotime(dt2)
+        dt2 = timeutils.utcnow() + datetime.timedelta(1)
+        iso2 = timeutils.isotime(dt2)
 
-        image_ts = datetime.datetime.utcnow() + datetime.timedelta(2)
+        image_ts = timeutils.utcnow() + datetime.timedelta(2)
         hour_before = image_ts.strftime('%Y-%m-%dT%H:%M:%S%%2B01:00')
         hour_after = image_ts.strftime('%Y-%m-%dT%H:%M:%S-01:00')
 
-        dt4 = datetime.datetime.utcnow() + datetime.timedelta(3)
-        iso4 = utils.isotime(dt4)
+        dt4 = timeutils.utcnow() + datetime.timedelta(3)
+        iso4 = timeutils.isotime(dt4)
 
         UUID3 = _gen_uuid()
         extra_fixture = {'id': UUID3,
@@ -2999,7 +2997,7 @@ class TestImageSerializer(base.IsolatedUnitTest):
         self.context = context.RequestContext(is_admin=True,
                                               user=self.receiving_user,
                                               tenant=self.receiving_tenant)
-        self.serializer = images.ImageSerializer(self.conf)
+        self.serializer = images.ImageSerializer()
 
         def image_iter():
             for x in ['chunk', '678911234', '56789']:
@@ -3014,8 +3012,8 @@ class TestImageSerializer(base.IsolatedUnitTest):
                  'disk_format': 'vhd',
                  'container_format': 'ovf',
                  'is_public': True,
-                 'created_at': datetime.datetime.utcnow(),
-                 'updated_at': datetime.datetime.utcnow(),
+                 'created_at': timeutils.utcnow(),
+                 'updated_at': timeutils.utcnow(),
                  'deleted_at': None,
                  'deleted': False,
                  'checksum': None,

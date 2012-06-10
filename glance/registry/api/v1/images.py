@@ -27,10 +27,19 @@ from glance.common import exception
 from glance.common import utils
 from glance.common import wsgi
 from glance.openstack.common import cfg
-from glance.registry.db import api as db_api
+from glance.db.sqlalchemy import api as db_api
+from glance.openstack.common import timeutils
 
 
 logger = logging.getLogger('glance.registry.api.v1.images')
+
+images_opts = [
+    cfg.IntOpt('limit_param_default', default=25),
+    cfg.IntOpt('api_limit_max', default=1000),
+    ]
+
+CONF = cfg.CONF
+CONF.register_opts(images_opts)
 
 DISPLAY_FIELDS_IN_INDEX = ['id', 'name', 'size',
                            'disk_format', 'container_format',
@@ -50,15 +59,8 @@ SUPPORTED_PARAMS = ('limit', 'marker', 'sort_key', 'sort_dir')
 
 class Controller(object):
 
-    opts = [
-        cfg.IntOpt('limit_param_default', default=25),
-        cfg.IntOpt('api_limit_max', default=1000),
-        ]
-
-    def __init__(self, conf):
-        self.conf = conf
-        self.conf.register_opts(self.opts)
-        db_api.configure_db(conf)
+    def __init__(self):
+        db_api.configure_db()
 
     def _get_images(self, context, **params):
         """
@@ -166,7 +168,7 @@ class Controller(object):
         if 'changes-since' in filters:
             isotime = filters['changes-since']
             try:
-                filters['changes-since'] = utils.parse_isotime(isotime)
+                filters['changes-since'] = timeutils.parse_isotime(isotime)
             except ValueError:
                 raise exc.HTTPBadRequest(_("Unrecognized changes-since value"))
 
@@ -196,15 +198,14 @@ class Controller(object):
     def _get_limit(self, req):
         """Parse a limit query param into something usable."""
         try:
-            limit = int(req.params.get('limit',
-                                           self.conf.limit_param_default))
+            limit = int(req.params.get('limit', CONF.limit_param_default))
         except ValueError:
             raise exc.HTTPBadRequest(_("limit param must be an integer"))
 
         if limit < 0:
             raise exc.HTTPBadRequest(_("limit param must be positive"))
 
-        return min(self.conf.api_limit_max, limit)
+        return min(CONF.api_limit_max, limit)
 
     def _get_marker(self, req):
         """Parse a marker query param into something usable."""
@@ -430,8 +431,8 @@ def make_image_dict(image):
     return image_dict
 
 
-def create_resource(conf):
+def create_resource():
     """Images resource factory method."""
     deserializer = wsgi.JSONRequestDeserializer()
     serializer = wsgi.JSONResponseSerializer()
-    return wsgi.Resource(Controller(conf), deserializer, serializer)
+    return wsgi.Resource(Controller(), deserializer, serializer)

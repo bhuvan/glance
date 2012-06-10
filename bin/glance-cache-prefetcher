@@ -42,10 +42,10 @@ from glance.common import config
 
 if __name__ == '__main__':
     try:
-        conf = config.GlanceCacheConfigOpts()
-        conf()
+        config.parse_cache_args()
 
-        app = config.load_paste_app(conf, 'glance-prefetcher')
+        app = config.load_paste_app('glance-prefetcher',
+                                    'glance-cache-paste.ini')
         app.run()
     except RuntimeError, e:
         sys.exit("ERROR: %s" % e)

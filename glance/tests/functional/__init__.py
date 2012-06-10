@@ -176,7 +176,6 @@ class ApiServer(Server):
         super(ApiServer, self).__init__(test_dir, port)
         self.server_name = 'api'
         self.default_store = 'file'
-        self.known_stores = test_utils.get_default_stores()
         self.key_file = ""
         self.cert_file = ""
         self.metadata_encryption_key = "012345678901234567890123456789ab"
@@ -222,7 +221,6 @@ verbose = %(verbose)s
 debug = %(debug)s
 filesystem_store_datadir=%(image_dir)s
 default_store = %(default_store)s
-known_stores = %(known_stores)s
 bind_host = 0.0.0.0
 bind_port = %(bind_port)s
 key_file = %(key_file)s
@@ -426,6 +424,7 @@ class FunctionalTest(test_utils.BaseTestCase):
     log_files = []
 
     def setUp(self):
+        super(FunctionalTest, self).setUp()
         self.test_id, self.test_dir = test_utils.get_isolated_test_env()
 
         self.api_protocol = 'http'
@@ -463,6 +462,7 @@ class FunctionalTest(test_utils.BaseTestCase):
             # from the tests
             self._reset_database(self.registry_server.sql_connection)
             self._reset_database(self.api_server.sql_connection)
+        super(FunctionalTest, self).tearDown()
 
     def set_policy_rules(self, rules):
         fap = open(self.policy_file, 'w')

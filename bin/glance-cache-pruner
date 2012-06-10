@@ -43,10 +43,9 @@ from glance.common import config
 
 if __name__ == '__main__':
     try:
-        conf = config.GlanceCacheConfigOpts()
-        conf()
+        config.parse_cache_args()
 
-        app = config.load_paste_app(conf, 'glance-pruner')
+        app = config.load_paste_app('glance-pruner', 'glance-cache-paste.ini')
         app.run()
     except RuntimeError, e:
         sys.exit("ERROR: %s" % e)

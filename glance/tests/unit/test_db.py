@@ -22,10 +22,10 @@ import random
 from glance.common import context
 from glance.common import exception
 from glance.common import utils
-from glance.registry.db import api as db_api
-from glance.registry.db import models as db_models
+from glance.db.sqlalchemy import api as db_api
+from glance.db.sqlalchemy import models as db_models
+from glance.openstack.common import timeutils
 from glance.tests.unit import base
-from glance.tests import utils as test_utils
 
 
 _gen_uuid = utils.generate_uuid
@@ -43,19 +43,16 @@ if UUID1 > UUID2:
     UUID1, UUID2 = UUID2, UUID1
 
 
-CONF = {'sql_connection': 'sqlite://',
-        'verbose': False,
-        'debug': False}
-
-
 class BaseDBTestCase(base.IsolatedUnitTest):
 
     def setUp(self):
         super(BaseDBTestCase, self).setUp()
-        conf = test_utils.TestConfigOpts(CONF)
+        self.config(sql_connection='sqlite://',
+                    verbose=False,
+                    debug=False)
         self.adm_context = context.RequestContext(is_admin=True)
         self.context = context.RequestContext(is_admin=False)
-        db_api.configure_db(conf)
+        db_api.configure_db()
         self.destroy_fixtures()
         self.create_fixtures()
 
@@ -112,7 +109,7 @@ class TestRegistryDb(BaseDBTestCase):
             db_api.image_create(self.adm_context, fixture)
 
     def build_fixtures(self):
-        t1 = datetime.datetime.utcnow()
+        t1 = timeutils.utcnow()
         t2 = t1 + datetime.timedelta(microseconds=1)
         return build_fixtures(t1, t2)
 
@@ -207,7 +204,7 @@ class TestDBImageTags(BaseDBTestCase):
 class TestRegistryDbWithSameTime(TestRegistryDb):
 
     def build_fixtures(self):
-        t1 = datetime.datetime.utcnow()
+        t1 = timeutils.utcnow()
         t2 = t1  # Same timestamp!
         return build_fixtures(t1, t2)
 
@@ -229,10 +226,12 @@ class TestPagingOrder(base.IsolatedUnitTest):
     def setUp(self):
         """Establish a clean test environment"""
         super(TestPagingOrder, self).setUp()
-        conf = test_utils.TestConfigOpts(CONF)
+        self.config(sql_connection='sqlite://',
+                    verbose=False,
+                    debug=False)
         self.adm_context = context.RequestContext(is_admin=True)
         self.context = context.RequestContext(is_admin=False)
-        db_api.configure_db(conf)
+        db_api.configure_db()
         self.destroy_fixtures()
         self.create_fixtures()
 
@@ -268,7 +267,7 @@ class TestPagingOrder(base.IsolatedUnitTest):
 
     def build_fixtures(self):
         self.images = []
-        t0 = datetime.datetime.utcnow()
+        t0 = timeutils.utcnow()
         for _ in xrange(0, self.ITEM_COUNT):
             tdelta = random.uniform(0, self.TIME_VALUES)
             min_disk = random.uniform(0, self.MINDISK_VALUES)

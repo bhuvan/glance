@@ -22,7 +22,7 @@ import webob.exc
 from glance.common import exception
 from glance.common import utils
 from glance.common import wsgi
-from glance.registry.db import api as db_api
+from glance.db.sqlalchemy import api as db_api
 
 
 logger = logging.getLogger('glance.registry.api.v1.members')
@@ -30,9 +30,8 @@ logger = logging.getLogger('glance.registry.api.v1.members')
 
 class Controller(object):
 
-    def __init__(self, conf):
-        self.conf = conf
-        db_api.configure_db(conf)
+    def __init__(self):
+        db_api.configure_db()
 
     def index(self, req, image_id):
         """
@@ -294,8 +293,8 @@ def make_member_list(members, **attr_map):
             if not memb.deleted]
 
 
-def create_resource(conf):
+def create_resource():
     """Image members resource factory method."""
     deserializer = wsgi.JSONRequestDeserializer()
     serializer = wsgi.JSONResponseSerializer()
-    return wsgi.Resource(Controller(conf), deserializer, serializer)
+    return wsgi.Resource(Controller(), deserializer, serializer)

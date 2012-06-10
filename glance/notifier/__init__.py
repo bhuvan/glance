@@ -16,14 +16,20 @@
 #    under the License.
 
 
-import datetime
 import socket
 import uuid
 
 from glance.common import exception
-from glance.common import utils
 from glance.openstack.common import cfg
+from glance.openstack.common import importutils
+from glance.openstack.common import timeutils
 
+notifier_opts = [
+    cfg.StrOpt('notifier_strategy', default='default')
+    ]
+
+CONF = cfg.CONF
+CONF.register_opts(notifier_opts)
 
 _STRATEGIES = {
     "logging": "glance.notifier.notify_log.LoggingStrategy",
@@ -37,15 +43,11 @@ _STRATEGIES = {
 class Notifier(object):
     """Uses a notification strategy to send out messages about events."""
 
-    opts = [
-        cfg.StrOpt('notifier_strategy', default='default')
-    ]
-
-    def __init__(self, conf, strategy=None):
-        conf.register_opts(self.opts)
-        strategy = conf.notifier_strategy
+    def __init__(self, strategy=None):
+        strategy = CONF.notifier_strategy
         try:
-            self.strategy = utils.import_class(_STRATEGIES[strategy])(conf)
+            strategy_cls = _STRATEGIES[strategy]
+            self.strategy = importutils.import_class(strategy_cls)()
         except (KeyError, ImportError):
             raise exception.InvalidNotifierStrategy(strategy=strategy)
 
@@ -57,7 +59,7 @@ class Notifier(object):
             "event_type": event_type,
             "priority": priority,
             "payload": payload,
-            "timestamp": str(datetime.datetime.utcnow()),
+            "timestamp": str(timeutils.utcnow()),
         }
 
     def warn(self, event_type, payload):

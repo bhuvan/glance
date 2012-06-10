@@ -31,8 +31,15 @@ from glance.common import utils
 from glance.openstack.common import cfg
 from glance.registry import client
 
-
 logger = logging.getLogger('glance.store.scrubber')
+
+scrubber_opts = [
+    cfg.BoolOpt('cleanup_scrubber', default=False),
+    cfg.IntOpt('cleanup_scrubber_time', default=86400)
+    ]
+
+CONF = cfg.CONF
+CONF.register_opts(scrubber_opts)
 
 
 class Daemon(object):
@@ -63,20 +70,12 @@ class Daemon(object):
 class Scrubber(object):
     CLEANUP_FILE = ".cleanup"
 
-    opts = [
-        cfg.BoolOpt('cleanup_scrubber', default=False),
-        cfg.IntOpt('cleanup_scrubber_time', default=86400)
-        ]
-
     def __init__(self, conf, **local_conf):
-        self.conf = conf
-        self.conf.register_opts(self.opts)
+        self.datadir = CONF.scrubber_datadir
+        self.cleanup = CONF.cleanup_scrubber
+        self.cleanup_time = CONF.cleanup_scrubber_time
 
-        self.datadir = store.get_scrubber_datadir(conf)
-        self.cleanup = self.conf.cleanup_scrubber
-        self.cleanup_time = self.conf.cleanup_scrubber_time
-
-        host, port = registry.get_registry_addr(conf)
+        host, port = CONF.registry_host, CONF.registry_port
 
         logger.info(_("Initializing scrubber with conf: %s") %
                     {'datadir': self.datadir, 'cleanup': self.cleanup,
@@ -87,7 +86,7 @@ class Scrubber(object):
 
         utils.safe_mkdirs(self.datadir)
 
-        store.create_stores(conf)
+        store.create_stores()
 
     def run(self, pool, event=None):
         now = time.time()
