@@ -16,11 +16,14 @@
 #    under the License.
 
 import httplib
+import logging
 import urlparse
 
 from glance.common import exception
 import glance.store.base
 import glance.store.location
+
+LOG = logging.getLogger(__name__)
 
 
 class StoreLocation(glance.store.location.StoreLocation):
@@ -75,12 +78,14 @@ class StoreLocation(glance.store.location.StoreLocation):
             except ValueError:
                 reason = (_("Credentials '%s' not well-formatted.")
                           % "".join(creds))
-                raise exception.BadStoreUri(uri, reason)
+                LOG.error(reason)
+                raise exception.BadStoreUri()
         else:
             self.user = None
         if netloc == '':
             reason = _("No address specified in HTTP URL")
-            raise exception.BadStoreUri(uri, reason)
+            LOG.error(reason)
+            raise exception.BadStoreUri(message=reason)
         self.netloc = netloc
         self.path = path
 

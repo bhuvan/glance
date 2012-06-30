@@ -125,13 +125,14 @@ class skip_unless(object):
 
 class requires(object):
     """Decorator that initiates additional test setup/teardown."""
-    def __init__(self, setup, teardown=None):
+    def __init__(self, setup=None, teardown=None):
         self.setup = setup
         self.teardown = teardown
 
     def __call__(self, func):
         def _runner(*args, **kw):
-            self.setup(args[0])
+            if self.setup:
+                self.setup(args[0])
             func(*args, **kw)
             if self.teardown:
                 self.teardown(args[0])
@@ -340,7 +341,7 @@ def minimal_add_command(port, name, suffix='', public=True):
 
 class FakeAuthMiddleware(wsgi.Middleware):
 
-    def __init__(self, app, conf, **local_conf):
+    def __init__(self, app):
         super(FakeAuthMiddleware, self).__init__(app)
 
     def process_request(self, req):

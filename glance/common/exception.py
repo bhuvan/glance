@@ -36,23 +36,15 @@ class GlanceException(Exception):
     """
     message = _("An unknown exception occurred")
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, message=None, *args, **kwargs):
+        if not message:
+            message = self.message
         try:
-            self._error_string = self.message % kwargs
+            message = message % kwargs
         except Exception:
             # at least get the core message out if something happened
-            self._error_string = self.message
-        if len(args) > 0:
-            # If there is a non-kwarg parameter, assume it's the error
-            # message or reason description and tack it on to the end
-            # of the exception message
-            # Convert all arguments into their string representations...
-            args = ["%s" % arg for arg in args]
-            self._error_string = (self._error_string +
-                                  "\nDetails: %s" % '\n'.join(args))
-
-    def __str__(self):
-        return self._error_string
+            pass
+        super(GlanceException, self).__init__(message)
 
 
 class MissingArgumentError(GlanceException):
@@ -77,7 +69,7 @@ class UnknownScheme(GlanceException):
 
 
 class BadStoreUri(GlanceException):
-    message = _("The Store URI %(uri)s was malformed. Reason: %(reason)s")
+    message = _("The Store URI was malformed.")
 
 
 class Duplicate(GlanceException):
@@ -123,6 +115,14 @@ class NotAuthorized(Forbidden):
 
 class Invalid(GlanceException):
     message = _("Data supplied was not valid.")
+
+
+class InvalidSortKey(Invalid):
+    message = _("Sort key supplied was not valid.")
+
+
+class InvalidFilterRangeValue(Invalid):
+    message = _("Unable to filter using the specified range.")
 
 
 class AuthorizationRedirect(GlanceException):

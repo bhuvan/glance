@@ -17,7 +17,7 @@ import json
 
 import webob
 
-from glance.api.v2 import image_access
+import glance.api.v2.image_access
 from glance.common import exception
 from glance.common import utils
 import glance.schema
@@ -30,31 +30,37 @@ class TestImageAccessController(test_utils.BaseTestCase):
     def setUp(self):
         super(TestImageAccessController, self).setUp()
         self.db = unit_test_utils.FakeDB()
-        self.controller = image_access.Controller(self.db)
+        self.controller = glance.api.v2.image_access.Controller(self.db)
 
     def test_index(self):
         req = unit_test_utils.get_fake_request()
         output = self.controller.index(req, unit_test_utils.UUID1)
-        expected = [
-            {
-                'image_id': unit_test_utils.UUID1,
-                'member': unit_test_utils.TENANT1,
-                'can_share': True,
-                'deleted': False,
-            },
-            {
-                'image_id': unit_test_utils.UUID1,
-                'member': unit_test_utils.TENANT2,
-                'can_share': False,
-                'deleted': False,
-            },
-        ]
+        expected = {
+            'access_records': [
+                {
+                    'image_id': unit_test_utils.UUID1,
+                    'member': unit_test_utils.TENANT1,
+                    'can_share': True,
+                    'deleted': False,
+                },
+                {
+                    'image_id': unit_test_utils.UUID1,
+                    'member': unit_test_utils.TENANT2,
+                    'can_share': False,
+                    'deleted': False,
+                },
+            ],
+            'image_id': unit_test_utils.UUID1,
+        }
         self.assertEqual(expected, output)
 
     def test_index_zero_records(self):
         req = unit_test_utils.get_fake_request()
         output = self.controller.index(req, unit_test_utils.UUID2)
-        expected = []
+        expected = {
+            'access_records': [],
+            'image_id': unit_test_utils.UUID2,
+        }
         self.assertEqual(expected, output)
 
     def test_index_nonexistant_image(self):
@@ -111,8 +117,7 @@ class TestImageAccessDeserializer(test_utils.BaseTestCase):
 
     def setUp(self):
         super(TestImageAccessDeserializer, self).setUp()
-        schema_api = glance.schema.API()
-        self.deserializer = image_access.RequestDeserializer(schema_api)
+        self.deserializer = glance.api.v2.image_access.RequestDeserializer()
 
     def test_create(self):
         fixture = {
@@ -129,55 +134,10 @@ class TestImageAccessDeserializer(test_utils.BaseTestCase):
         request.body = json.dumps(fixture)
         output = self.deserializer.create(request)
         self.assertEqual(expected, output)
-
-
-class TestImageAccessDeserializerWithExtendedSchema(test_utils.BaseTestCase):
-
-    def setUp(self):
-        super(TestImageAccessDeserializerWithExtendedSchema, self).setUp()
-        schema_api = glance.schema.API()
-        props = {
-            'color': {
-              'type': 'string',
-              'required': True,
-              'enum': ['blue', 'red'],
-            },
-        }
-        schema_api.set_custom_schema_properties('access', props)
-        self.deserializer = image_access.RequestDeserializer(schema_api)
-
-    def test_create(self):
-        fixture = {
-            'tenant_id': unit_test_utils.TENANT1,
-            'can_share': False,
-            'color': 'blue',
-        }
-        expected = {
-            'access_record': {
-                'member': unit_test_utils.TENANT1,
-                'can_share': False,
-                'color': 'blue',
-            },
-        }
-        request = unit_test_utils.get_fake_request()
-        request.body = json.dumps(fixture)
-        output = self.deserializer.create(request)
-        self.assertEqual(expected, output)
-
-    def test_create_bad_data(self):
-        fixture = {
-            'tenant_id': unit_test_utils.TENANT1,
-            'can_share': False,
-            'color': 'purple',
-        }
-        request = unit_test_utils.get_fake_request()
-        request.body = json.dumps(fixture)
-        self.assertRaises(exception.InvalidObject,
-                self.deserializer.create, request)
 
 
 class TestImageAccessSerializer(test_utils.BaseTestCase):
-    serializer = image_access.ResponseSerializer()
+    serializer = glance.api.v2.image_access.ResponseSerializer()
 
     def test_show(self):
         fixture = {
@@ -191,10 +151,9 @@ class TestImageAccessSerializer(test_utils.BaseTestCase):
             'access_record': {
                 'tenant_id': unit_test_utils.TENANT1,
                 'can_share': False,
-                'links': [
-                    {'rel': 'self', 'href': self_href},
-                    {'rel': 'describedby', 'href': '/v2/schemas/image/access'},
-                ],
+                'self': self_href,
+                'schema': '/v2/schemas/image/access',
+                'image': '/v2/images/%s' % unit_test_utils.UUID1,
             },
         }
         response = webob.Response()
@@ -214,45 +173,52 @@ class TestImageAccessSerializer(test_utils.BaseTestCase):
                 'can_share': True,
             },
         ]
+        result = {
+            'access_records': fixtures,
+            'image_id': unit_test_utils.UUID1,
+        }
         expected = {
             'access_records': [
                 {
                     'tenant_id': unit_test_utils.TENANT1,
                     'can_share': False,
-                    'links': [
-                        {
-                            'rel': 'self',
-                            'href': ('/v2/images/%s/access/%s' %
+                    'self': ('/v2/images/%s/access/%s' %
                                     (unit_test_utils.UUID1,
-                                     unit_test_utils.TENANT1))
-                        },
-                        {
-                            'rel': 'describedby',
-                            'href': '/v2/schemas/image/access',
-                        },
-                    ],
+                                     unit_test_utils.TENANT1)),
+                    'schema': '/v2/schemas/image/access',
+                    'image': '/v2/images/%s' % unit_test_utils.UUID1,
                 },
                 {
                     'tenant_id': unit_test_utils.TENANT2,
                     'can_share': True,
-                    'links': [
-                        {
-                            'rel': 'self',
-                            'href': ('/v2/images/%s/access/%s' %
+                    'self': ('/v2/images/%s/access/%s' %
                                     (unit_test_utils.UUID1,
-                                     unit_test_utils.TENANT2))
-                        },
-                        {
-                            'rel': 'describedby',
-                            'href': '/v2/schemas/image/access',
-                        },
-                    ],
+                                     unit_test_utils.TENANT2)),
+                    'schema': '/v2/schemas/image/access',
+                    'image': '/v2/images/%s' % unit_test_utils.UUID1,
                 },
             ],
-            'links': [],
+           'first': '/v2/images/%s/access' % unit_test_utils.UUID1,
+           'schema': '/v2/schemas/image/accesses',
+
         }
         response = webob.Response()
-        self.serializer.index(response, fixtures)
+        self.serializer.index(response, result)
+        self.assertEqual(expected, json.loads(response.body))
+
+    def test_index_zero_access_records(self):
+        result = {
+            'access_records': [],
+            'image_id': unit_test_utils.UUID1,
+        }
+        response = webob.Response()
+        self.serializer.index(response, result)
+        first_link = '/v2/images/%s/access' % unit_test_utils.UUID1
+        expected = {
+            'access_records': [],
+            'first': first_link,
+            'schema': '/v2/schemas/image/accesses',
+        }
         self.assertEqual(expected, json.loads(response.body))
 
     def test_create(self):
@@ -267,10 +233,9 @@ class TestImageAccessSerializer(test_utils.BaseTestCase):
             'access': {
                 'tenant_id': unit_test_utils.TENANT1,
                 'can_share': False,
-                'links': [
-                    {'rel': 'self', 'href': self_href},
-                    {'rel': 'describedby', 'href': '/v2/schemas/image/access'},
-                ],
+                'self': self_href,
+                'schema': '/v2/schemas/image/access',
+                'image': '/v2/images/%s' % unit_test_utils.UUID1,
             },
         }
         response = webob.Response()

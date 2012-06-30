@@ -26,16 +26,10 @@ import logging
 import time
 
 import sqlalchemy
-from sqlalchemy import asc, create_engine, desc
-from sqlalchemy.exc import (IntegrityError, OperationalError, DBAPIError,
-                            DisconnectionError)
-from sqlalchemy.orm import exc
-from sqlalchemy.orm import joinedload
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.sql import or_, and_
+import sqlalchemy.orm
+import sqlalchemy.sql
 
 from glance.common import exception
-from glance import db
 from glance.db.sqlalchemy import migration
 from glance.db.sqlalchemy import models
 from glance.openstack.common import cfg
@@ -48,17 +42,8 @@ _MAX_RETRIES = None
 _RETRY_INTERVAL = None
 BASE = models.BASE
 sa_logger = None
-logger = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
-# attributes common to all models
-BASE_MODEL_ATTRS = set(['id', 'created_at', 'updated_at', 'deleted_at',
-                        'deleted'])
-
-IMAGE_ATTRS = BASE_MODEL_ATTRS | set(['name', 'status', 'size',
-                                      'disk_format', 'container_format',
-                                      'min_disk', 'min_ram', 'is_public',
-                                      'location', 'checksum', 'owner',
-                                      'protected'])
 
 CONTAINER_FORMATS = ['ami', 'ari', 'aki', 'bare', 'ovf']
 DISK_FORMATS = ['ami', 'ari', 'aki', 'vhd', 'vmdk', 'raw', 'qcow2', 'vdi',
@@ -70,7 +55,7 @@ db_opts = [
     cfg.IntOpt('sql_idle_timeout', default=3600),
     cfg.IntOpt('sql_max_retries', default=10),
     cfg.IntOpt('sql_retry_interval', default=1),
-    cfg.BoolOpt('db_auto_create', default=True),
+    cfg.BoolOpt('db_auto_create', default=False),
     ]
 
 CONF = cfg.CONF
@@ -92,8 +77,9 @@ class MySQLPingListener(object):
             dbapi_con.cursor().execute('select 1')
         except dbapi_con.OperationalError, ex:
             if ex.args[0] in (2006, 2013, 2014, 2045, 2055):
-                logger.warn('Got mysql server has gone away: %s', ex)
-                raise DisconnectionError("Database server went away")
+                msg = 'Got mysql server has gone away: %s' % ex
+                LOG.warn(msg)
+                raise sqlalchemy.exc.DisconnectionError(msg)
             else:
                 raise
 
@@ -103,7 +89,7 @@ def configure_db():
     Establish the database, create an engine if needed, and
     register the models.
     """
-    global _ENGINE, sa_logger, logger, _MAX_RETRIES, _RETRY_INTERVAL
+    global _ENGINE, sa_logger, _MAX_RETRIES, _RETRY_INTERVAL
     if not _ENGINE:
         sql_connection = CONF.sql_connection
         _MAX_RETRIES = CONF.sql_max_retries
@@ -117,24 +103,22 @@ def configure_db():
             engine_args['listeners'] = [MySQLPingListener()]
 
         try:
-            _ENGINE = create_engine(sql_connection, **engine_args)
+            _ENGINE = sqlalchemy.create_engine(sql_connection, **engine_args)
             _ENGINE.connect = wrap_db_error(_ENGINE.connect)
             _ENGINE.connect()
         except Exception, err:
             msg = _("Error configuring registry database with supplied "
                     "sql_connection '%(sql_connection)s'. "
                     "Got error:\n%(err)s") % locals()
-            logger.error(msg)
+            LOG.error(msg)
             raise
 
         sa_logger = logging.getLogger('sqlalchemy.engine')
         if CONF.debug:
             sa_logger.setLevel(logging.DEBUG)
-        elif CONF.verbose:
-            sa_logger.setLevel(logging.INFO)
 
         if CONF.db_auto_create:
-            logger.info('auto-creating glance registry DB')
+            LOG.info('auto-creating glance registry DB')
             models.register_models(_ENGINE)
             try:
                 migration.version_control()
@@ -142,12 +126,12 @@ def configure_db():
                 # only arises when the DB exists and is under version control
                 pass
         else:
-            logger.info('not auto-creating glance registry DB')
+            LOG.info('not auto-creating glance registry DB')
 
 
 def check_mutate_authorization(context, image_ref):
-    if not context.is_image_mutable(image_ref):
-        logger.info(_("Attempted to modify image user did not own."))
+    if not is_image_mutable(context, image_ref):
+        LOG.info(_("Attempted to modify image user did not own."))
         msg = _("You do not own this image")
         if image_ref.is_public:
             exc_class = exception.ForbiddenPublicImage
@@ -159,12 +143,12 @@ def check_mutate_authorization(context, image_ref):
 
 def get_session(autocommit=True, expire_on_commit=False):
     """Helper method to grab session"""
-    global _MAKER, _ENGINE
+    global _MAKER
     if not _MAKER:
         assert _ENGINE
-        _MAKER = sessionmaker(bind=_ENGINE,
-                              autocommit=autocommit,
-                              expire_on_commit=expire_on_commit)
+        _MAKER = sqlalchemy.orm.sessionmaker(bind=_ENGINE,
+                                             autocommit=autocommit,
+                                             expire_on_commit=expire_on_commit)
     return _MAKER()
 
 
@@ -184,27 +168,25 @@ def wrap_db_error(f):
     def _wrap(*args, **kwargs):
         try:
             return f(*args, **kwargs)
-        except OperationalError, e:
+        except sqlalchemy.exc.OperationalError, e:
             if not is_db_connection_error(e.args[0]):
                 raise
 
-            global _MAX_RETRIES
-            global _RETRY_INTERVAL
             remaining_attempts = _MAX_RETRIES
             while True:
-                logger.warning(_('SQL connection failed. %d attempts left.'),
+                LOG.warning(_('SQL connection failed. %d attempts left.'),
                                 remaining_attempts)
                 remaining_attempts -= 1
                 time.sleep(_RETRY_INTERVAL)
                 try:
                     return f(*args, **kwargs)
-                except OperationalError, e:
+                except sqlalchemy.exc.OperationalError, e:
                     if (remaining_attempts == 0 or
                         not is_db_connection_error(e.args[0])):
                         raise
-                except DBAPIError:
+                except sqlalchemy.exc.DBAPIError:
                     raise
-        except DBAPIError:
+        except sqlalchemy.exc.DBAPIError:
             raise
     _wrap.func_name = f.func_name
     return _wrap
@@ -238,7 +220,7 @@ def image_destroy(context, image_id):
         for prop_ref in image_ref.properties:
             image_property_delete(context, prop_ref, session=session)
 
-        for memb_ref in image_ref.members:
+        for memb_ref in image_member_find(context, image_id=image_id):
             image_member_delete(context, memb_ref, session=session)
 
         return image_ref
@@ -250,9 +232,8 @@ def image_get(context, image_id, session=None, force_show_deleted=False):
 
     try:
         query = session.query(models.Image).\
-                        options(joinedload(models.Image.properties)).\
-                        options(joinedload(models.Image.members)).\
-                        filter_by(id=image_id)
+                options(sqlalchemy.orm.joinedload(models.Image.properties)).\
+                filter_by(id=image_id)
 
         # filter out deleted images if context disallows it
         if not force_show_deleted and not can_show_deleted(context):
@@ -260,14 +241,92 @@ def image_get(context, image_id, session=None, force_show_deleted=False):
 
         image = query.one()
 
-    except exc.NoResultFound:
+    except sqlalchemy.orm.exc.NoResultFound:
         raise exception.NotFound("No image found with ID %s" % image_id)
 
     # Make sure they can look at it
-    if not context.is_image_visible(image):
+    if not is_image_visible(context, image):
         raise exception.Forbidden("Image not visible to you")
 
     return image
+
+
+def is_image_mutable(context, image):
+    """Return True if the image is mutable in this context."""
+    # Is admin == image mutable
+    if context.is_admin:
+        return True
+
+    # No owner == image not mutable
+    if image['owner'] is None or context.owner is None:
+        return False
+
+    # Image only mutable by its owner
+    return image['owner'] == context.owner
+
+
+def is_image_sharable(context, image, **kwargs):
+    """Return True if the image can be shared to others in this context."""
+    # Only allow sharing if we have an owner
+    if context.owner is None:
+        return False
+
+    # Is admin == image sharable
+    if context.is_admin:
+        return True
+
+    # If we own the image, we can share it
+    if context.owner == image['owner']:
+        return True
+
+    # Let's get the membership association
+    if 'membership' in kwargs:
+        membership = kwargs['membership']
+        if membership is None:
+            # Not shared with us anyway
+            return False
+    else:
+        members = image_member_find(context,
+                                    image_id=image['id'],
+                                    member=context.owner)
+        if members:
+            member = members[0]
+        else:
+            # Not shared with us anyway
+            return False
+
+    # It's the can_share attribute we're now interested in
+    return member['can_share']
+
+
+def is_image_visible(context, image):
+    """Return True if the image is visible in this context."""
+    # Is admin == image visible
+    if context.is_admin:
+        return True
+
+    # No owner == image visible
+    if image['owner'] is None:
+        return True
+
+    # Image is_public == image visible
+    if image['is_public']:
+        return True
+
+    # Perform tests based on whether we have an owner
+    if context.owner is not None:
+        if context.owner == image['owner']:
+            return True
+
+        # Figure out if this image is shared with that tenant
+        members = image_member_find(context,
+                                    image_id=image['id'],
+                                    member=context.owner)
+        if members:
+            return not members[0]['deleted']
+
+    # Private image
+    return False
 
 
 def paginate_query(query, model, limit, sort_keys, marker=None,
@@ -305,7 +364,7 @@ def paginate_query(query, model, limit, sort_keys, marker=None,
     if 'id' not in sort_keys:
         # TODO(justinsb): If this ever gives a false-positive, check
         # the actual primary key, rather than assuming its id
-        logger.warn(_('Id not in sort_keys; is sort_keys unique?'))
+        LOG.warn(_('Id not in sort_keys; is sort_keys unique?'))
 
     assert(not (sort_dir and sort_dirs))
 
@@ -322,11 +381,14 @@ def paginate_query(query, model, limit, sort_keys, marker=None,
     # Add sorting
     for current_sort_key, current_sort_dir in zip(sort_keys, sort_dirs):
         sort_dir_func = {
-            'asc': asc,
-            'desc': desc,
+            'asc': sqlalchemy.asc,
+            'desc': sqlalchemy.desc,
         }[current_sort_dir]
 
-        sort_key_attr = getattr(model, current_sort_key)
+        try:
+            sort_key_attr = getattr(model, current_sort_key)
+        except AttributeError:
+            raise exception.InvalidSortKey()
         query = query.order_by(sort_dir_func(sort_key_attr))
 
     # Add pagination
@@ -353,10 +415,10 @@ def paginate_query(query, model, limit, sort_keys, marker=None,
                 raise ValueError(_("Unknown sort direction, "
                                    "must be 'desc' or 'asc'"))
 
-            criteria = and_(*crit_attrs)
+            criteria = sqlalchemy.sql.and_(*crit_attrs)
             criteria_list.append(criteria)
 
-        f = or_(*criteria_list)
+        f = sqlalchemy.sql.or_(*criteria_list)
         query = query.filter(f)
 
     if limit is not None:
@@ -382,25 +444,17 @@ def image_get_all(context, filters=None, marker=None, limit=None,
 
     session = get_session()
     query = session.query(models.Image).\
-                    options(joinedload(models.Image.properties)).\
-                    options(joinedload(models.Image.members))
-
-    if 'size_min' in filters:
-        query = query.filter(models.Image.size >= filters['size_min'])
-        del filters['size_min']
-
-    if 'size_max' in filters:
-        query = query.filter(models.Image.size <= filters['size_max'])
-        del filters['size_max']
+            options(sqlalchemy.orm.joinedload(models.Image.properties))
 
     if 'is_public' in filters and filters['is_public'] is not None:
         the_filter = [models.Image.is_public == filters['is_public']]
         if filters['is_public'] and context.owner is not None:
-            the_filter.extend([(models.Image.owner == context.owner),
-                               models.Image.members.any(member=context.owner,
-                                                        deleted=False)])
+            the_filter.extend([
+                (models.Image.owner == context.owner),
+                models.Image.members.any(member=context.owner, deleted=False)
+            ])
         if len(the_filter) > 1:
-            query = query.filter(or_(*the_filter))
+            query = query.filter(sqlalchemy.sql.or_(*the_filter))
         else:
             query = query.filter(the_filter[0])
         del filters['is_public']
@@ -426,7 +480,25 @@ def image_get_all(context, filters=None, marker=None, limit=None,
 
     for (k, v) in filters.items():
         if v is not None:
-            query = query.filter(getattr(models.Image, k) == v)
+            key = k
+            if k.endswith('_min') or k.endswith('_max'):
+                key = key[0:-4]
+                try:
+                    v = int(v)
+                except ValueError:
+                    msg = _("Unable to filter on a range "
+                            "with a non-numeric value.")
+                    raise exception.InvalidFilterRangeValue(msg)
+
+            if k.endswith('_min'):
+                query = query.filter(getattr(models.Image, key) >= v)
+            elif k.endswith('_max'):
+                query = query.filter(getattr(models.Image, key) <= v)
+            elif hasattr(models.Image, key):
+                query = query.filter(getattr(models.Image, key) == v)
+            else:
+                query = query.filter(models.Image.properties.any(name=key,
+                                                                 value=v))
 
     marker_image = None
     if marker is not None:
@@ -583,7 +655,7 @@ def _image_update(context, values, image_id, purge_props=False):
 
         try:
             image_ref.save(session=session)
-        except IntegrityError, e:
+        except sqlalchemy.exc.IntegrityError:
             raise exception.Duplicate("Image ID %s already exists!"
                                       % values['id'])
 
@@ -668,9 +740,7 @@ def image_member_update(context, memb_ref, values, session=None):
 
 
 def _image_member_update(context, memb_ref, values, session=None):
-    """
-    Used internally by image_member_create and image_member_update
-    """
+    """Apply supplied dictionary of values to a Member object."""
     _drop_protected_attrs(models.ImageMember, values)
     values["deleted"] = False
     values.setdefault('can_share', False)
@@ -687,80 +757,24 @@ def image_member_delete(context, memb_ref, session=None):
     return memb_ref
 
 
-def image_member_get(context, member_id, session=None):
-    """Get an image member or raise if it does not exist."""
-    session = session or get_session()
-    try:
-        query = session.query(models.ImageMember).\
-                        options(joinedload(models.ImageMember.image)).\
-                        filter_by(id=member_id)
+def image_member_find(context, image_id=None, member=None, session=None):
+    """Find all members that meet the given criteria
 
-        if not can_show_deleted(context):
-            query = query.filter_by(deleted=False)
-
-        member = query.one()
-
-    except exc.NoResultFound:
-        raise exception.NotFound("No membership found with ID %s" % member_id)
-
-    # Make sure they can look at it
-    if not context.is_image_visible(member.image):
-        raise exception.Forbidden("Image not visible to you")
-
-    return member
-
-
-def image_member_find(context, image_id, member, session=None):
-    """Find a membership association between image and member."""
-    session = session or get_session()
-    try:
-        # Note lack of permissions check; this function is called from
-        # RequestContext.is_image_visible(), so avoid recursive calls
-        query = session.query(models.ImageMember).\
-                        options(joinedload(models.ImageMember.image)).\
-                        filter_by(image_id=image_id).\
-                        filter_by(member=member)
-
-        if not can_show_deleted(context):
-            query = query.filter_by(deleted=False)
-
-        return query.one()
-
-    except exc.NoResultFound:
-        raise exception.NotFound("No membership found for image %s member %s" %
-                                 (image_id, member))
-
-
-def image_member_get_memberships(context, member, marker=None, limit=None,
-                                 sort_key='created_at', sort_dir='desc'):
+    :param image_id: identifier of image entity
+    :param member: tenant to which membership has been granted
     """
-    Get all image memberships for the given member.
+    session = session or get_session()
 
-    :param member: the member to look up memberships for
-    :param marker: membership id after which to start page
-    :param limit: maximum number of memberships to return
-    :param sort_key: membership attribute by which results should be sorted
-    :param sort_dir: direction in which results should be sorted (asc, desc)
-    """
+    # Note lack of permissions check; this function is called from
+    # is_image_visible(), so avoid recursive calls
+    query = session.query(models.ImageMember)
 
-    session = get_session()
-    query = session.query(models.ImageMember).\
-                    options(joinedload(models.ImageMember.image)).\
-                    filter_by(member=member)
-
+    if image_id is not None:
+        query = query.filter_by(image_id=image_id)
+    if member is not None:
+        query = query.filter_by(member=member)
     if not can_show_deleted(context):
         query = query.filter_by(deleted=False)
-
-    marker_membership = None
-    if marker is not None:
-        # memberships returned should be created before the membership
-        # defined by marker
-        marker_membership = image_member_get(context, marker)
-
-    query = paginate_query(query, models.ImageMember, limit,
-                           [sort_key, 'id'],
-                           marker=marker_membership,
-                           sort_dir=sort_dir)
 
     return query.all()
 
@@ -809,7 +823,7 @@ def image_tag_delete(context, image_id, value, session=None):
                     filter_by(deleted=False)
     try:
         tag_ref = query.one()
-    except exc.NoResultFound:
+    except sqlalchemy.orm.exc.NoResultFound:
         raise exception.NotFound()
 
     tag_ref.delete(session=session)

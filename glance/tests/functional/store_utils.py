@@ -87,7 +87,8 @@ def setup_http(test):
 
 
 def teardown_http(test):
-    test.http_server.shutdown()
+    if test.http_server:
+        test.http_server.shutdown()
 
 
 def get_http_uri(test, image_id):
@@ -120,7 +121,7 @@ def setup_swift(test):
             test.disabled = True
             return
 
-    from swift.common import client as swift_client
+    import swiftclient
 
     try:
         swift_host = test.swift_store_auth_address
@@ -136,7 +137,7 @@ def setup_swift(test):
         test.disabled = True
         return
 
-    swift_conn = swift_client.Connection(
+    swift_conn = swiftclient.Connection(
         authurl=swift_host, user=user, key=key, snet=False, retries=1)
 
     try:
@@ -151,7 +152,7 @@ def setup_swift(test):
         for container in containers:
             if container == container_name:
                 swift_conn.delete_container(container)
-    except swift_client.ClientException, e:
+    except swiftclient.ClientException, e:
         test.disabled_message = ("Failed to delete container from Swift "
                                  "Got error: %s" % e)
         test.disabled = True
@@ -161,7 +162,7 @@ def setup_swift(test):
 
     try:
         swift_conn.put_container(container_name)
-    except swift_client.ClientException, e:
+    except swiftclient.ClientException, e:
         test.disabled_message = ("Failed to create container. "
                                  "Got error: %s" % e)
         test.disabled = True
@@ -170,10 +171,10 @@ def setup_swift(test):
 
 def teardown_swift(test):
     if not test.disabled:
-        from swift.common import client as swift_client
+        import swiftclient
         try:
             test.swift_conn.delete_container(test.swift_store_container)
-        except swift_client.ClientException, e:
+        except swiftclient.ClientException, e:
             if e.http_status == httplib.CONFLICT:
                 pass
             else:

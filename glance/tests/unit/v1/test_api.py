@@ -20,6 +20,7 @@ import hashlib
 import httplib
 import json
 
+import routes
 import stubout
 import webob
 
@@ -70,9 +71,9 @@ class TestRegistryDb(test_utils.BaseTestCase):
             if 'Error configuring registry database' in msg:
                 self.log_written = True
 
-        self.stubs.Set(db_api.logger, 'error', fake_log_error)
+        self.stubs.Set(db_api.LOG, 'error', fake_log_error)
         try:
-            api_obj = rserver.API(None)
+            api_obj = rserver.API(routes.Mapper())
         except exc.ArgumentError:
             exc_raised = True
         except ImportError:
@@ -92,8 +93,9 @@ class TestRegistryAPI(base.IsolatedUnitTest):
     def setUp(self):
         """Establish a clean test environment"""
         super(TestRegistryAPI, self).setUp()
-        self.api = context.UnauthenticatedContextMiddleware(rserver.API(None),
-                                                            None)
+        mapper = routes.Mapper()
+        self.api = (
+            context.UnauthenticatedContextMiddleware(rserver.API(mapper)))
         self.FIXTURES = [
             {'id': UUID1,
              'name': 'fake image #1',
@@ -1961,8 +1963,8 @@ class TestGlanceAPI(base.IsolatedUnitTest):
     def setUp(self):
         """Establish a clean test environment"""
         super(TestGlanceAPI, self).setUp()
-        self.api = context.UnauthenticatedContextMiddleware(router.API(None),
-                                                            None)
+        mapper = routes.Mapper()
+        self.api = context.UnauthenticatedContextMiddleware(router.API(mapper))
         self.FIXTURES = [
             {'id': UUID1,
              'name': 'fake image #1',
@@ -3046,7 +3048,6 @@ class TestImageSerializer(base.IsolatedUnitTest):
         req.method = 'GET'
         req.context = self.context
         response = webob.Response(request=req)
-
         self.serializer.show(response, self.FIXTURE)
         for key, value in exp_headers.iteritems():
             self.assertEquals(value, response.headers[key])
@@ -3059,7 +3060,7 @@ class TestImageSerializer(base.IsolatedUnitTest):
         req.method = 'GET'
         req.context = self.context
         response = webob.Response(request=req)
-        response.environ['eventlet.posthooks'] = []
+        response.request.environ['eventlet.posthooks'] = []
 
         self.serializer.show(response, self.FIXTURE)
 
@@ -3067,7 +3068,7 @@ class TestImageSerializer(base.IsolatedUnitTest):
         for chunk in response.app_iter:
             pass
 
-        self.assertNotEqual(response.environ['eventlet.posthooks'], [])
+        self.assertNotEqual(response.request.environ['eventlet.posthooks'], [])
 
     def test_image_send_notification(self):
         req = webob.Request.blank("/images/%s" % UUID2)

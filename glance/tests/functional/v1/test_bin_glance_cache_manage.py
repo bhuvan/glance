@@ -190,7 +190,7 @@ class TestBinGlanceCacheManage(functional.FunctionalTest):
         cache_file_options = {
             'image_cache_dir': self.api_server.image_cache_dir,
             'image_cache_driver': self.image_cache_driver,
-            'registry_port': self.api_server.registry_port,
+            'registry_port': self.registry_server.bind_port,
             'log_file': os.path.join(self.test_dir, 'cache.log'),
             'metadata_encryption_key': "012345678901234567890123456789ab"
         }
@@ -205,25 +205,6 @@ registry_port = %(registry_port)s
 metadata_encryption_key = %(metadata_encryption_key)s
 log_file = %(log_file)s
 """ % cache_file_options)
-
-        with open(cache_config_filepath.replace(".conf", "-paste.ini"),
-                  'w') as paste_file:
-            paste_file.write("""[app:glance-pruner]
-paste.app_factory = glance.common.wsgi:app_factory
-glance.app_factory = glance.image_cache.pruner:Pruner
-
-[app:glance-prefetcher]
-paste.app_factory = glance.common.wsgi:app_factory
-glance.app_factory = glance.image_cache.prefetcher:Prefetcher
-
-[app:glance-cleaner]
-paste.app_factory = glance.common.wsgi:app_factory
-glance.app_factory = glance.image_cache.cleaner:Cleaner
-
-[app:glance-queue-image]
-paste.app_factory = glance.common.wsgi:app_factory
-glance.app_factory = glance.image_cache.queue_image:Queuer
-""")
 
         cmd = ("bin/glance-cache-prefetcher --config-file %s" %
                cache_config_filepath)
